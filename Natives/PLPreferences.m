@@ -139,6 +139,11 @@ NSString *const PREF_MOD_MIRROR = @"general.mod_mirror";
             }.mutableCopy,
             @"java_args": @"",
             @"env_variables": @"",
+            // dyld 库校验旁路总开关（设置页：Java 调整 → 绕过 dyld 库校验）。
+            // 键必须在此注册，否则 getter/setter 静默失败，设置页开关存不下来
+            // （日志 "could not find preference java.dyld_bypass"）。
+            // 默认 @NO：真机 A/B 证实旁路会让启动器卡死在 dlopen(libjli)。
+            @"dyld_bypass": @NO,
             @"auto_ram": @(!getEntitlementValue(@"com.apple.private.memorystatus")),
             @"allocated_memory": [NSNumber numberWithFloat:roundf((NSProcessInfo.processInfo.physicalMemory / 1048576) * 0.25)],
             // profile 写入的强制 Java 版本，auto=根据游戏版本自动选择

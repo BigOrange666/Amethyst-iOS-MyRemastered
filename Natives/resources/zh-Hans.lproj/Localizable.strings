@@ -431,6 +431,8 @@
 "preference.placeholder.java_args" = "Specify arguments...";
 "preference.title.env_variables" = "Environment variables";
 "preference.detail.env_variables" = "Set custom environment variables when launching Minecraft. Be careful, this can make the game crash if modified incorrectly.";
+"preference.title.dyld_bypass" = "Bypass dyld library validation";
+"preference.detail.dyld_bypass" = "Off by default. Enabling this patches dyld's mmap/fcntl and was found to hang the launcher at dlopen(libjli) on iOS 16.2. Leave it off unless you know your setup needs it. Changes apply after a full app restart.";
 "preference.placeholder.env_variables" = "Specify variables...";
 "preference.title.auto_ram" = "Auto RAM";
 "preference.detail.auto_ram" = "Enables automatic RAM adjuster";

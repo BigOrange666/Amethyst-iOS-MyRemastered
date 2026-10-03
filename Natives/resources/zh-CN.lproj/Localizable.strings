@@ -358,6 +358,8 @@
 "preference.placeholder.java_args" = "自定义参数...";
 "preference.title.env_variables" = "环境变量";
 "preference.detail.env_variables" = "在启动 Minecraft 时设置自定义环境变量。小心，这可能会使游戏崩溃。";
+"preference.title.dyld_bypass" = "绕过 dyld 库校验";
+"preference.detail.dyld_bypass" = "默认关闭。开启后会改写 dyld 的 mmap/fcntl，实测在 iOS 16.2 上会让启动器卡死在 dlopen(libjli)。除非确知本机需要，否则请保持关闭。改动需完全重启 App 生效。";
 "preference.placeholder.env_variables" = "指定变量...";
 "preference.title.auto_ram" = "自动设置内存大小";
 "preference.detail.auto_ram" = "启用内存自动调节";

@@ -1115,6 +1115,15 @@
                 @"type": self.typeTextField,
                 @"enableCondition": whenNotInGame
             },
+            // dyld 旁路总开关。真机 A/B 证实旁路是 MC 26.2 启动崩溃的元凶
+            // （旁路开 → 卡死 dlopen(libjli)；关 → JVM 正常起来），故默认关闭。
+            // 仅在确认本机确实需要时才开启；改动需完全重启 App 生效。
+            @{@"key": @"dyld_bypass",
+                @"hasDetail": @YES,
+                @"icon": @"wrench.and.screwdriver",
+                @"type": self.typeSwitch,
+                @"enableCondition": whenNotInGame
+            },
             @{@"key": @"auto_ram",
                 @"hasDetail": @YES,
                 @"icon": @"slider.horizontal.3",

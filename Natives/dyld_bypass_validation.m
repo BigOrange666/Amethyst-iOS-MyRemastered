@@ -15,6 +15,7 @@
 #include <libkern/OSCacheControl.h>
 
 #include "utils.h"
+#import "LauncherPreferences.h"
 
 #define ASM(...) __asm__(#__VA_ARGS__)
 // ldr x8, value; br x8; value: .ascii "\x41\x42\x43\x44\x45\x46\x47\x48"
@@ -231,6 +232,28 @@ void init_bypassDyldLibValidation() {
     bypassed = YES;
 
     NSDebugLog(@"[DyldLVBypass] init");
+
+    // ---- 总开关：默认关闭 ----
+    //
+    // 真机 A/B（iPhone 14 Pro Max / iOS 16.2 / TrollStore，MC 26.2 + Java 25，
+    // build f60d830）结论：旁路就是 dlopen(libjli) 崩溃的元凶。
+    //   旁路开 + MetalANGLE → 卡死在 dlopen(libjli)，SIGBUS 活锁，连
+    //                          [Init] Found JLI lib 都没有；
+    //   旁路关 + 同一渲染器 → JVM 正常起来，一路走到 Minecraft.<init>。
+    // 同一对照里旁路关 + MoltenVK 能进游戏。
+    //
+    // 原因是本机签名（TrollStore + no-sandbox + increased-memory-limit）本身
+    // 已放宽校验，dlopen libjli 不需要这个补丁；补丁反而把 dyld 的
+    // mmap/fcntl 入口改成 RW，在 iOS 16.2 上执行非可执行页 → SIGBUS。
+    //
+    // 因此默认不再安装钩子，改由 Java 调整里的开关显式开启（保留逃生口：
+    // 某些非 TrollStore 环境可能仍需要它）。设置项改动需完全重启 App 生效，
+    // 因为本函数在启动流程里只跑一次。
+    if (!getPrefBool(@"java.dyld_bypass")) {
+        NSDebugLog(@"[DyldLVBypass] disabled by default (java.dyld_bypass=OFF), no hook installed");
+        return;
+    }
+    NSDebugLog(@"[DyldLVBypass] enabled by user (java.dyld_bypass=ON)");
     
     // The original switch used exact bitmask matching, so a device with
     // IS_IOS_26 + HAS_TXM (no FORCE_MIRRORED) — i.e. a normal iPhone 17 on
