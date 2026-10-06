@@ -110,6 +110,10 @@ void init_logDeviceAndVer(char *argument) {
     NSLog(@"[Pre-Init] Please try not to post this log of the remastered launcher to the original GitHub Issues for help.");
     NSLog(@"[Pre-Init] Version: %@", NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"], CONFIG_TYPE);
     NSLog(@"[Pre-Init] Commit: %s (%s)", CONFIG_COMMIT, CONFIG_BRANCH);
+    // 唯一构建标识。放进环境变量后，native-crash.log / JavaLauncher 的取证日志会
+    // 自动带上它 —— 崩溃现场不需要再猜是哪个构建。
+    NSLog(@"[Pre-Init] Build: %s", AME_BUILD_STAMP);
+    setenv("AMETHYST_BUILD", AME_BUILD_STAMP, 1);
     
     NSString *tsPath = [NSString stringWithFormat:@"%@/../_TrollStore", NSBundle.mainBundle.bundlePath];
     const char *type;

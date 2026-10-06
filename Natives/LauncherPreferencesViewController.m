@@ -1880,8 +1880,16 @@
 
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     if (section == 0) { // Add to general section
-        NSString *versionString = [NSString stringWithFormat:@"Amethyst iOS Remastered %@\n%@ on %@ (%s)\nPID: %d",
+        // 构建标识取自 AMETHYST_BUILD（main.m 里由 AME_BUILD_STAMP 写入），与启动
+        // 日志、native-crash.log 同源：不用对着设备截图猜版本，翻到设置页就能念出
+        // 「分支@短commit/长12 时间戳 dirty」。
+        const char *buildEnv = getenv("AMETHYST_BUILD");
+        NSString *build = (buildEnv != NULL && buildEnv[0] != '\0')
+            ? [NSString stringWithUTF8String:buildEnv] : nil;
+        if (build.length == 0) build = @"(build info unavailable)";
+        NSString *versionString = [NSString stringWithFormat:@"Amethyst iOS Remastered %@\nBuild: %@\n%@ on %@ (%s)\nPID: %d",
             NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"],
+            build,
             UIDevice.currentDevice.completeOSVersion, [HostManager GetModelName], getenv("POJAV_DETECTEDINST"), getpid()];
         
         // Style footer for background if needed

@@ -12,6 +12,12 @@ DETECTARCH  := $(shell uname -m)
 VERSION     := 1.0
 BRANCH      := $(shell git branch --show-current)
 COMMIT      := $(shell git log --oneline | sed '2,10000000d' | cut -b 1-7)
+# 完整 commit：短 hash 在同一分支多次 rebase 后很容易重复，光看 [Pre-Init] Commit
+# 无法唯一确认复测的是哪个构建，故补 12 位长 hash + 构建时刻。
+COMMIT_FULL := $(shell git rev-parse --short=12 HEAD 2>/dev/null)
+BUILD_TIME  := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+# 工作区不干净就打 +dirty：Actions 上 build 前后若有残留改动，产物与 commit 不等价。
+GIT_DIRTY   := $(if $(shell git status --porcelain 2>/dev/null | head -n 1),+dirty,clean)
 PLATFORM    ?= 2
 
 # Release vs Debug
@@ -30,6 +36,9 @@ SLIMMED_ONLY ?= 0
 # so that compiling doesn't fail
 BRANCH ?= "unknown"
 COMMIT ?= "unknown"
+COMMIT_FULL ?= "unknown"
+BUILD_TIME ?= "unknown"
+GIT_DIRTY ?= "unknown"
 
 # Team IDs and provisioning profile for the codesign function
 # Default to -1 for check
@@ -284,6 +293,9 @@ native: dep_mg
 		-DCMAKE_C_FLAGS="-arch arm64" \
 		-DCONFIG_BRANCH="$(BRANCH)" \
 		-DCONFIG_COMMIT="$(COMMIT)" \
+		-DCONFIG_COMMIT_FULL="$(COMMIT_FULL)" \
+		-DCONFIG_BUILD_TIME="$(BUILD_TIME)" \
+		-DCONFIG_GIT_DIRTY="$(GIT_DIRTY)" \
 		-DCONFIG_RELEASE=$(RELEASE) \
 		..
 

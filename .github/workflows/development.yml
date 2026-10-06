@@ -1,13 +1,10 @@
 name: Development build
 
+# 2026-10-06 已停用 push / pull_request 触发，改由 development2.yml
+# (macos-15 / Xcode 26) 负责自动构建，避免每次 push 同时跑两条流水线、
+# 白白抢一个 macos runner。要手动跑这条 macos-14 / Xcode 15.4 的老流水线，
+# 到 Actions 页面用 Run workflow 触发即可。
 on:
-  pull_request:
-    branches-ignore:
-      - 'l10n_main'
-    types: [opened, reopened, synchronize]
-  push:
-    branches-ignore:
-      - 'l10n_main'
   workflow_dispatch:
 
 jobs:

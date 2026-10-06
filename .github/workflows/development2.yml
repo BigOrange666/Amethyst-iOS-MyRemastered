@@ -1,0 +1,380 @@
+# 2026-10-06 拿自其他开发者（yiyehsi0-hash 线）的 macos-15 / Xcode 26 构建流水线。
+# 原文件名 developmen2.yml（上游拼写如此），本地改名为 development2.yml，
+# 已按本仓库适配，**不能原样使用**：
+#   1. 原文件与 development.yml 同名同触发条件 → 每次 push 双跑、抢 runner。
+#      已把 development.yml 的 push / pull_request 触发改成 workflow_dispatch
+#      （老 macos-14 / Xcode 15.4 流水线仍可手动跑），自动构建由本文件负责。
+#   2. 原文件 Xcode 回退硬编码 /Applications/Xcode_15.4.app，而 macos-15 镜像没有
+#      15.4；找不到 Xcode 26 时 xcode-select 失败 → 步骤被 bash -e 中止。已改为
+#      回退到镜像上**现存的最新 Xcode**。
+#   3. 原文件丢了 8 步（MobileGL/SFPEW 上传与回提交、构建日志上传、BUILD_MOBILEGL
+#      传参）且没声明 permissions: contents: write（回提交必失败）。已补回。
+#   4. 原文件 Purge 缓存排在 cache restore **之后**，刚恢复的 mobileglues/sfpew 缓存
+#      会被 rm -rf Natives/build 删光。已改成**用所选 SDK 作为 cache key**，
+#      换 SDK 自动不命中（天然拿不到陈旧 CMakeCache），purge 步骤因此删除。
+#   5. ldid 按要求**保持 Homebrew 默认版本**（不固定版本号）。注意 macos-15 上
+#      `brew install ldid` 会因为 openssl@3 与镜像残留的 openssl@1.1 抢 link
+#      而返回 1（ldid 本身已经 Pour 成功），所以不能用 brew 的退出码判断成败，
+#      改用 command -v ldid 自证。
+#   6. -j1 太慢，改回 -j$(sysctl -n hw.ncpu)（本仓库已验证可用）。
+#   7. 缓存路径修正：原文件的 Natives/build/java_runtimes、Natives/build/assets 在
+#      本仓库不存在（JRE 解到 depends/，见 Makefile:112 POJAV_JRE8_DIR），已改为
+#      缓存 depends/。
+# 保留并复用了原文件的好东西：concurrency、SDK 显式写 GITHUB_ENV、SDK 自证。
+name: Development build (macos-15 / Xcode 26)
+
+on:
+  # 手动触发。注意：要能在 Actions 页面上点，workflow 必须先落到默认分支；
+  # 落地前靠下面的 push 触发来跑。
+  workflow_dispatch:
+  # 原 development.yml 的触发条件整体搬到这里（它已改成只剩 workflow_dispatch），
+  # 保证每次 push / PR 仍然恰好只跑一条流水线。
+  pull_request:
+    branches-ignore:
+      - 'l10n_main'
+    types: [opened, reopened, synchronize]
+  push:
+    branches-ignore:
+      - 'l10n_main'
+
+# 并发控制：同一 ref 新的触发会取消仍在排队或运行的旧构建，
+# 缓解 macos-14/15 runner 供应紧张导致的"一直卡在队列中"。
+concurrency:
+  group: dev-build2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Development build
+    strategy:
+      matrix:
+        include:
+          - platform: 2
+            platform_name: ios
+
+    # 原作者的判断：macos-14 上不了 Xcode 26（要求 macOS 15.5+），而 iOS 26
+    # 的液态玻璃只有用 iOS 26 SDK 构建才生效。找不到 Xcode 26 时自动回退。
+    runs-on: macos-15
+
+    # 发布 nightly release 需要 contents: write
+    # （MobileGL dylib / SFPEW 日志要推回仓库，缺这一步会 403）
+    permissions:
+      contents: write
+
+    steps:
+      - name: Select Xcode (prefer 26+ for iOS 26 Liquid Glass, else newest available)
+        id: xcode
+        run: |
+          echo "== 可用 Xcode =="
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          echo "== 默认 =="
+          xcodebuild -version || true
+
+          PICK=""
+          for app in $(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V -r); do
+            PICK="$app"; break
+          done
+          if [ -z "$PICK" ]; then
+            for app in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V -r); do
+              v=$(basename "$app" | sed -E 's/Xcode_?([0-9]+).*/\1/')
+              if [ -n "$v" ] && [ "$v" -ge 26 ] 2>/dev/null; then PICK="$app"; break; fi
+            done
+          fi
+
+          if [ -n "$PICK" ]; then
+            sudo xcode-select -s "$PICK/Contents/Developer"
+            echo "★ 选用 $PICK"
+          else
+            # macos-15 镜像上没有 Xcode_15.4.app，硬编码回退会直接把步骤搞挂
+            # （Actions 默认 shell 带 -e）。回退到镜像上**现存的**最新 Xcode。
+            FALLBACK=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V -r | head -1)
+            if [ -z "$FALLBACK" ]; then
+              echo "★ 系统上没有任何 Xcode.app，无法构建"; exit 1
+            fi
+            sudo xcode-select -s "$FALLBACK/Contents/Developer"
+            echo "★ 未找到 Xcode 26，回退 ${FALLBACK}（本包不含 iOS 26 新外观）"
+          fi
+          xcodebuild -version || true
+
+          SDK=$(xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || echo '?')
+          SDKPATH_REAL=$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null || echo '')
+          echo "★ iPhoneOS SDK = $SDK"
+          echo "★ SDKPATH = $SDKPATH_REAL"
+
+          # ★ 关键：Makefile 里是 SDKPATH ?= ...（?= 不覆盖已有值），
+          #   若环境里带着旧的 SDKPATH，或 CMake 缓存了旧 CMAKE_OSX_SYSROOT，
+          #   就会【用旧 SDK 编译】。这里显式写入 GITHUB_ENV 强制统一。
+          echo "SDKPATH=$SDKPATH_REAL" >> "$GITHUB_ENV"
+          echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          echo "★ 已写入 GITHUB_ENV: SDKPATH / DEVELOPER_DIR"
+
+          # SDK 作为 cache key 的一部分：换 SDK 就不命中，自动避免
+          # 「恢复的 CMakeCache 里 CMAKE_OSX_SYSROOT 指向旧 SDK」这类问题
+          echo "sdkver=${SDK}" >> "$GITHUB_OUTPUT"
+
+      - name: Install GNU Make
+        run: |
+          brew update
+          brew install make
+
+      - name: Install Java 8 (Temurin) via Homebrew
+        run: |
+          brew install --cask temurin@8 || true
+
+      - name: Install ldid
+        # 按要求使用 Homebrew 默认版本，不固定版本号。
+        # 实测（2026-10-06，macos-15）：ldid 2.1.5_2 本体能正常 Pour，
+        # 但 brew 装依赖 openssl@3 时的 `brew link` 与镜像里残留的
+        # openssl@1.1 冲突，导致【整个 brew install 返回 1】——其实 ldid 已装好。
+        # 所以不能让 brew 的退出码决定成败，改用 command -v ldid 自证；
+        # 真装不上时 command -v 会返回非零，照样把步骤判失败。
+        run: |
+          rc=0
+          brew install ldid || rc=$?
+          echo "[ci] brew install ldid 退出码 = $rc"
+          command -v ldid
+          echo "[ci] ldid = $(command -v ldid)"
+          ldid 2>&1 | head -3 || true
+
+      - name: Remove work folders
+        run: |
+          echo "before"
+          ls -lah ./
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          echo "after"
+          ls -lah ./
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Drop stale submodule gitlinks
+        # 历史遗留：MobileGL 曾以 submodule 方式接入，上游 force push 导致
+        # pinned commit 消失、孤立 gitlink 被反复引入。现在只在确实是
+        # mode 160000 的 gitlink 时才清理，对正常 vendored 目录无副作用
+        # （原作者直接删了这一步是误判，条件化的清理不会丢 MobileGlues 内容）。
+        run: |
+          for p in Natives/external/MobileGL Natives/external/MobileGlues; do
+            mode=$(git ls-files -s -- "$p" 2>/dev/null | awk '{print $1}')
+            if [ "$mode" = "160000" ]; then
+              echo "dropping stale gitlink: $p"
+              git rm --cached -f "$p" || true
+              git config --remove-section "submodule.$p" 2>/dev/null || true
+            else
+              echo "$p is a regular path (mode=${mode:-none}), keeping"
+            fi
+          done
+
+      - name: Checkout repository submodules
+        env:
+          # MobileGL 上游 LFS 配额已用尽，其 LFS 文件与 iOS 构建无关，
+          # 跳过 smudge 避免 submodule checkout 失败 exit 128
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: git submodule update --init --recursive
+
+      # ==== [speed] 依赖缓存（原作者加的，本仓库路径已核实）====
+      # 注意：Natives/build 与 depends/ 都在 .gitignore 中，全新 checkout 必然不存在，
+      # 因此「陈旧 CMake 缓存」只会来自这里恢复的缓存 → 用 SDK 参与 key 即可根治。
+      - name: Cache heavy 3rd-party builds (MobileGlues / glslang / SPIRV-Cross / SFPEW)
+        uses: actions/cache@v4
+        with:
+          path: |
+            Natives/build/mobileglues
+            Natives/build/sfpew
+          key: dep3rd-${{ runner.os }}-sdk${{ steps.xcode.outputs.sdkver }}-${{ hashFiles('Makefile') }}
+          restore-keys: |
+            dep3rd-${{ runner.os }}-sdk${{ steps.xcode.outputs.sdkver }}-
+
+      - name: Cache JRE downloads
+        # 原作者写的是 Natives/build/java_runtimes 与 Natives/build/assets ——
+        # 本仓库两者都不存在；JRE 解到 depends/java-{8,17,21,25}-openjdk
+        # （Makefile:112 POJAV_JRE8_DIR ?= $(SOURCEDIR)/depends/java-8-openjdk）。
+        uses: actions/cache@v4
+        with:
+          path: depends
+          key: jre-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          restore-keys: |
+            jre-${{ runner.os }}-
+
+      - name: Cache evidence
+        run: |
+          echo "==== cache state ===="
+          for d in Natives/build/mobileglues Natives/build/sfpew depends; do
+            if [ -d "$d" ]; then
+              echo "HIT  $d : $(find "$d" -type f 2>/dev/null | wc -l | tr -d ' ') files, $(du -sh "$d" 2>/dev/null | cut -f1)"
+            else
+              echo "MISS $d (absent)"
+            fi
+          done
+          echo "SDK=${{ steps.xcode.outputs.sdkver }}"
+          echo "====================="
+
+      - name: Build for ${{ matrix.platform_name }}
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: 14.0
+          CONFIG_CURSEFORGE_API_KEY: ${{ secrets.CONFIG_CURSEFORGE_API_KEY }}
+          # 供下面的 make 使用（控制 dep_mobilegl 是否从仓库内源码编译 MobileGL）。
+          # 在 env: 里引用 vars 是官方支持的用法；不要写成 export 再插值。
+          BUILD_MOBILEGL: ${{ vars.BUILD_MOBILEGL }}
+        run: |
+          set -o pipefail
+          export PATH=/opt/homebrew/bin:$PATH
+          export SLIMMED=0
+          export BUILD_MOBILEGL="${BUILD_MOBILEGL:-1}"
+          echo "[ci] BUILD_MOBILEGL=${BUILD_MOBILEGL} vars=${{ vars.BUILD_MOBILEGL }} sdk=${{ steps.xcode.outputs.sdkver }} src=$(test -d Natives/external/MobileGL && echo yes || echo no)"
+
+          if [ "${{ matrix.platform_name }}" == "ios" ]; then
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }}
+
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} TROLLSTORE_JIT_ENT=1
+
+          elif [ "${{ matrix.platform_name }}" == "tvos" ]; then
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} TROLLSTORE_JIT_ENT=1
+
+          else
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }}
+          fi
+
+      - name: Upload MobileGL dylib (if built)
+        # 未开启 BUILD_MOBILEGL 或编译失败时目录不存在，hashFiles 判断后跳过。
+        if: matrix.platform_name == 'ios' && success() && hashFiles('Natives/build/libMobileGL.dylib') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: libMobileGL.dylib
+          path: Natives/build/libMobileGL.dylib
+          if-no-files-found: ignore
+
+      - name: Upload MobileGL GLES dylib (if built)
+        if: matrix.platform_name == 'ios' && success() && hashFiles('Natives/build/libMobileGL-gles.dylib') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: libMobileGL-gles.dylib
+          path: Natives/build/libMobileGL-gles.dylib
+
+      - name: Commit MobileGL dylibs back to repo (one-shot)
+        # 绝不能因为这一步失败就拖垮 ipa 产物。
+        continue-on-error: true
+        if: matrix.platform_name == 'ios' && success() && hashFiles('Natives/build/libMobileGL.dylib') != '' && hashFiles('Natives/build/libMobileGL-gles.dylib') != '' && vars.COMMIT_MOBILEGL == '1'
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -e -x
+          # 把 CI 编译出的 dylib 提交回仓库，避免每次构建重编 glslang + SPIRV-Cross。
+          # dylib 未剥离，各约 90MB，git 默认 http.postBuffer 只有 1MB 会 HTTP 413。
+          git config http.postBuffer 524288000
+          git config http.version HTTP/1.1
+          git config http.lowSpeedLimit 1000
+          git config http.lowSpeedTime 300
+          cp Natives/build/libMobileGL.dylib Natives/resources/Frameworks/libMobileGL.dylib
+          cp Natives/build/libMobileGL-gles.dylib Natives/resources/Frameworks/libMobileGL-gles.dylib
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f Natives/resources/Frameworks/libMobileGL.dylib Natives/resources/Frameworks/libMobileGL-gles.dylib
+          if git diff --cached --quiet; then
+            echo "[ci] MobileGL dylibs unchanged, nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(mobilegl): 提交 iOS 版 MobileGL 预编译产物 [skip ci]"
+          if ! git push origin HEAD:"$BRANCH_NAME"; then
+            echo "[ci] 首次推送失败，尝试 pull --rebase 后重试"
+            git pull --rebase origin "$BRANCH_NAME" || true
+            git push origin HEAD:"$BRANCH_NAME"
+          fi
+
+      - name: Upload SFPEW build log
+        if: matrix.platform_name == 'ios' && always() && hashFiles('Natives/build/sfpew_build.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: sfpew-build.log
+          path: Natives/build/sfpew_build.log
+          if-no-files-found: ignore
+
+      - name: Upload SFPEW dylib
+        if: matrix.platform_name == 'ios' && always() && hashFiles('Natives/build/libSimpleFPEWrapper.dylib') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: libSimpleFPEWrapper.dylib
+          path: Natives/build/libSimpleFPEWrapper.dylib
+          if-no-files-found: ignore
+
+      - name: Upload MobileGL build log
+        if: matrix.platform_name == 'ios' && always() && hashFiles('mobilegl-build.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobilegl-build.log
+          path: mobilegl-build.log
+          if-no-files-found: ignore
+
+      - name: Publish SFPEW build log to repo (diagnosis)
+        if: matrix.platform_name == 'ios' && always() && hashFiles('Natives/build/libSimpleFPEWrapper.dylib') == ''
+        continue-on-error: true
+        run: |
+          set -e
+          if [ ! -f Natives/build/sfpew_build.log ]; then
+            echo "[ci] SFPEW: no build log -- dep_sfpew did not reach cmake"; exit 0
+          fi
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          mkdir -p ci-logs
+          cp Natives/build/sfpew_build.log ci-logs/sfpew-build.log
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-logs/sfpew-build.log
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "ci(sfpew): 提交构建日志用于定位 [skip ci]"
+          git push origin HEAD:"$BRANCH_NAME" || { git pull --rebase origin "$BRANCH_NAME"; git push origin HEAD:"$BRANCH_NAME"; }
+
+      - name: Verify the built binary really used the expected SDK
+        run: |
+          # ★ 自证：读【主二进制】LC_BUILD_VERSION 的 sdk 字段。
+          # 两点注意：
+          # 1) 必须排除 dSYM：artifacts/*.dSYM/Contents/Resources/DWARF/AngelAuraAmethyst
+          #    与主可执行文件同名，原先 `find -name ... | head -1` 抓到的正是它，
+          #    读的是 DWARF 文件，自证等于白做。
+          # 2) 读到的 SDK 会恒等于 16.0，与所选 SDK 不同属预期：打包阶段
+          #    Makefile:158 的 `vtool -set-build-version <plat> 14.0 16.0 -replace`
+          #    主动改写了 LC_BUILD_VERSION（16.0 是硬编码常量），编译期用的
+          #    确实是上面选中的 SDK，所以下面两个值不一致不代表编错。
+          APP=$(find . -path '*.app/AngelAuraAmethyst' -type f 2>/dev/null | head -1)
+          if [ -z "$APP" ]; then
+            APP=$(find . -name 'AngelAuraAmethyst' -type f -not -path '*.dSYM*' 2>/dev/null | head -1)
+          fi
+          echo "★ bin=$APP"
+          if [ -n "$APP" ]; then
+            python3 - "$APP" <<'PY'
+          import struct, sys
+          b = open(sys.argv[1], 'rb').read()
+          if b[:4] != b'\xcf\xfa\xed\xfe':
+              print('★ 不是 Mach-O'); raise SystemExit
+          n = struct.unpack_from('<I', b, 16)[0]; off = 32
+          for _ in range(n):
+              cmd, cs = struct.unpack_from('<II', b, off)
+              if cmd == 0x32:
+                  plat, minos, sdk = struct.unpack_from('<III', b, off+8)
+                  f = lambda v: '%d.%d.%d' % (v>>16&0xff, v>>8&0xff, v&0xff)
+                  print('★★ LC_BUILD_VERSION: minOS=%s  SDK=%s' % (f(minos), f(sdk)))
+                  break
+              off += cs
+          PY
+            echo "★★ 实际构建所选 SDK=${{ steps.xcode.outputs.sdkver }}"
+          fi
+
+      - name: Upload regular ipa
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: com.air-devs.air-${{ matrix.platform_name }}.ipa
+          path: artifacts/com.air-devs.air-*-${{ matrix.platform_name }}.ipa
+
+      - name: Upload regular tipa
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: com.air-devs.air-${{ matrix.platform_name }}-trollstore.tipa
+          path: artifacts/com.air-devs.air-*-${{ matrix.platform_name }}-trollstore.tipa
+
+      - name: Upload PojavLauncher.dSYM
+        if: matrix.platform_name == 'ios' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AngelAuraAmethyst.dSYM
+          path: artifacts/AngelAuraAmethyst.dSYM

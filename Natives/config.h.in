@@ -22,6 +22,28 @@
 # define CONFIG_COMMIT "unknown"
 #endif
 
+// 完整 commit（12 位）+ 构建时刻 + 工作区是否 dirty。
+// 短 commit + 分支在多人快节奏推送下可能撞车（同一分支两次 rebase 后的短 hash
+// 很容易重复），复测「挂的是哪个构建」时必须能唯一锁定，故补全长 hash 与时间戳。
+#cmakedefine CONFIG_COMMIT_FULL "@CONFIG_COMMIT_FULL@"
+#cmakedefine CONFIG_BUILD_TIME "@CONFIG_BUILD_TIME@"
+#cmakedefine CONFIG_GIT_DIRTY "@CONFIG_GIT_DIRTY@"
+
+#ifndef CONFIG_COMMIT_FULL
+# define CONFIG_COMMIT_FULL "unknown"
+#endif
+#ifndef CONFIG_BUILD_TIME
+# define CONFIG_BUILD_TIME "unknown"
+#endif
+#ifndef CONFIG_GIT_DIRTY
+# define CONFIG_GIT_DIRTY "unknown"
+#endif
+
+// 唯一的构建标识：启动日志、设置页页脚、native-crash.log 三处同源，避免各写一套
+// 之后对不上。格式：<branch>@<short>/<full12> <buildtime><dirty>
+#define AME_BUILD_STAMP \
+    CONFIG_BRANCH "@" CONFIG_COMMIT "/" CONFIG_COMMIT_FULL " " CONFIG_BUILD_TIME CONFIG_GIT_DIRTY
+
 #cmakedefine CONFIG_CURSEFORGE_API_KEY "@CONFIG_CURSEFORGE_API_KEY@"
 
 #ifndef CONFIG_CURSEFORGE_API_KEY 
