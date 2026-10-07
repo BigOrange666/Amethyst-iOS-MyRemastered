@@ -1468,7 +1468,7 @@
 "i18n_str_878" = "组件安装";
 "i18n_str_879" = "高级设置";
 "i18n_str_880" = "服务器";
-"i18n_str_881" = "游戏目录决定存档/模组/配置文件的隔离位置\n\".\" = 使用当前游戏目录切换选中的实例\n点击可修改为相对/绝对路径实现版本隔离";
+"i18n_str_881" = "游戏目录决定存档/模组/配置文件的位置。\n不隔离 = 共用当前游戏目录；版本隔离 = versions/<版本ID>；\n点击上方“游戏目录”可切换隔离方式或设置自定义路径。";
 "i18n_str_882" = "Fabric API：Fabric 模组的依赖库（仅 Fabric 加载器有效）\nOptiFine：OptiFine 优化模组（仅原版/Forge 有效）";
 "i18n_str_885" = "仅 Fabric 有效";
 "i18n_str_886" = "仅原版/Forge 有效";
@@ -1956,3 +1956,15 @@
 
 "preference.auto" = "自动";
 "preference.auto_select" = "自动选择";
+
+"preference.isolation.hint" = "当前游戏目录：%@";
+"preference.isolation.nomigrate" = "切换隔离方式不会移动已存在的存档、模组与配置文件。";
+"preference.isolation.option.shared" = "不隔离（共用当前游戏目录）";
+"preference.isolation.option.version" = "版本隔离（versions/<版本ID>）";
+"preference.isolation.option.custom" = "自定义路径…";
+"preference.isolation.forced" = "整合包实例必须保持隔离，只能修改自定义路径。";
+"preference.isolation.default.title" = "新实例默认隔离策略";
+"preference.isolation.default.modded" = "仅隔离含 Mod 加载器的实例（推荐）";
+"preference.isolation.default.version" = "隔离所有新实例";
+"preference.isolation.default.shared" = "从不隔离";
+"preference.detail.default_isolation" = "仅在创建实例时生效，存量实例不受影响。";

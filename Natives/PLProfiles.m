@@ -5,6 +5,7 @@
 //  Profile manager with JSON-safe save
 //
 
+#import "GameDirectoryResolver.h"
 #import "LauncherPreferences.h"
 #import "PLProfiles.h"
 #import "utils.h"
@@ -12,6 +13,7 @@
 static PLProfiles* current;
 
 @interface PLProfiles()
++ (BOOL)profileLooksModded:(NSDictionary *)profile;
 @end
 
 @implementation PLProfiles
@@ -160,8 +162,42 @@ static PLProfiles* current;
     if (!self.profileDict[@"profiles"]) {
         self.profileDict[@"profiles"] = [NSMutableDictionary dictionary];
     }
+
+    // 版本隔离（对齐 HMCL DefaultIsolationType）：只在「首次注册」且调用方没指定目录时
+    // 按全局默认策略（general.default_isolation）固化一次。
+    // 存量实例（同名已存在）与调用方自带 gameDir 的 profile（整合包 / 自定义路径）都不碰。
+    NSDictionary *previous = self.profileDict[@"profiles"][name];
+    BOOL isNewProfile = ![previous isKindOfClass:[NSDictionary class]];
+    id gameDir = profile[@"gameDir"];
+    BOOL hasOwnGameDir = [gameDir isKindOfClass:[NSString class]] &&
+                         ((NSString *)gameDir).length > 0 && ![(NSString *)gameDir isEqualToString:@"."];
+    if (isNewProfile && !hasOwnGameDir && ![profile[@"isolation"] isKindOfClass:[NSString class]]) {
+        [GameDirectoryResolver applyDefaultIsolationToProfile:profile
+                                                       modded:[[self class] profileLooksModded:profile]];
+    }
+
     self.profileDict[@"profiles"][name] = profile;
     [self save];
+}
+
+/// 从版本号 / loader 字段判断是不是带 Mod 加载器的实例（决定默认隔离策略 MODDED 分支）
++ (BOOL)profileLooksModded:(NSDictionary *)profile {
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    for (NSString *key in @[@"lastVersionId", @"aiLoader", @"loader"]) {
+        id value = profile[key];
+        if ([value isKindOfClass:[NSString class]] && [(NSString *)value length] > 0) {
+            [candidates addObject:[(NSString *)value lowercaseString]];
+        }
+    }
+    NSArray<NSString *> *loaders = @[@"forge", @"fabric", @"neoforge", @"quilt", @"optifine"];
+    for (NSString *text in candidates) {
+        for (NSString *loader in loaders) {
+            if ([text rangeOfString:loader].location != NSNotFound) {
+                return YES;
+            }
+        }
+    }
+    return NO;
 }
 
 #pragma mark - 服务器地址（FCL 风格：启动后自动加入服务器）

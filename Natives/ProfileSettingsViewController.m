@@ -5,6 +5,7 @@
 #import "DataPacksManagerViewController.h"
 #import "WorldsManagerViewController.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "LauncherPreferences.h"
 #import "LauncherNavigationController.h" // for localVersionList/remoteVersionList
 #import "MinecraftResourceUtils.h"
@@ -354,7 +355,7 @@ static NSString * localizeProfileTitle(NSString *title) {
 
     // ===== 副标题（游戏目录，12pt regular，secondaryLabelColor）=====
     UILabel *subtitleLabel = [[UILabel alloc] init];
-    NSString *gameDir = self.profile[@"gameDir"] ?: @".";
+    NSString *gameDir = [GameDirectoryResolver displayValueForProfile:self.profile];
     NSString *instanceName = getPrefObject(@"general.game_directory") ?: @"default";
     subtitleLabel.text = [NSString stringWithFormat:@"%@ → /instances/%@", gameDir, instanceName];
     subtitleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
@@ -447,7 +448,7 @@ static NSString * localizeProfileTitle(NSString *title) {
                 NSString *currentVersion = self.profile[@"lastVersionId"];
                 label.text = currentVersion.length > 0 ? currentVersion : localize(@"i18n_str_864", nil);
             } else {
-                NSString *gameDir = self.profile[@"gameDir"] ?: @".";
+                NSString *gameDir = [GameDirectoryResolver displayValueForProfile:self.profile];
                 NSString *instanceName = getPrefObject(@"general.game_directory") ?: @"default";
                 label.text = [NSString stringWithFormat:@"%@ → /instances/%@", gameDir, instanceName];
             }
@@ -629,6 +630,13 @@ static NSString * localizeProfileTitle(NSString *title) {
     }
     // 保存游戏目录（版本隔离用）：gameDir 为 nil 时默认 "."，与 main 分支行为一致
     existing[@"gameDir"] = self.profile[@"gameDir"] ?: @".";
+    // 版本隔离模式（shared / version / custom）：缺失时由 GameDirectoryResolver 从旧 gameDir 推导
+    id isolationValue = self.profile[@"isolation"];
+    if ([isolationValue isKindOfClass:[NSString class]] && [(NSString *)isolationValue length] > 0) {
+        existing[@"isolation"] = isolationValue;
+    } else {
+        [existing removeObjectForKey:@"isolation"];
+    }
     // existing 中的 name 和 lastVersionId 字段保持原始值不变
     PLProfiles.current.profiles[profName] = existing;
     [PLProfiles.current save];
@@ -719,8 +727,8 @@ static NSString * localizeProfileTitle(NSString *title) {
             } else if ([title isEqualToString:@"游戏目录"]) {
                 cell.imageView.image = [UIImage systemImageNamed:@"folder"];
                 cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-                NSString *gameDir = self.profile[@"gameDir"] ?: @".";
-                cell.detailTextLabel.text = gameDir;
+                // 三态展示：不隔离 → "."；版本隔离 → versions/<id>；自定义 → 路径原文
+                cell.detailTextLabel.text = [GameDirectoryResolver displayValueForProfile:self.profile];
             }
             break;
 
@@ -1198,10 +1206,85 @@ static NSString * localizeProfileTitle(NSString *title) {
 
 #pragma mark - Actions
 
-/// 编辑游戏目录（仿 main 分支 LauncherProfileEditorViewController 的 gameDir 文本框）
-/// gameDir="." 表示使用当前 POJAV_GAME_DIR（即"游戏目录切换"选中的实例目录）
-/// 也可以输入相对路径（相对于 POJAV_GAME_DIR）或绝对路径来实现版本隔离
+/// 编辑游戏目录（版本隔离三态选择器，对齐 HMCL 的 runningDirectory 覆写）
+/// 不隔离 = 共用主目录；版本隔离 = <主目录>/versions/<版本ID>；自定义 = 任意路径
+/// 切换只改解析结果，不搬迁已存在的数据（与 HMCL 行为一致）
 - (void)editGameDir {
+    // 整合包实例强制隔离（HMCL：modpack 实例不允许取消隔离），只允许改自定义路径
+    if ([GameDirectoryResolver isModpackProfile:self.profile]) {
+        UIAlertController *forced = [UIAlertController
+            alertControllerWithTitle:localize(@"i18n_str_2004", nil)
+                             message:localize(@"preference.isolation.forced", nil)
+                      preferredStyle:UIAlertControllerStyleAlert];
+        [forced addAction:[UIAlertAction actionWithTitle:localize(@"resman.common.cancel", nil)
+                                                  style:UIAlertActionStyleCancel
+                                                handler:nil]];
+        [forced addAction:[UIAlertAction actionWithTitle:localize(@"i18n_str_44", nil)
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction * _Nonnull action) {
+            [self editGameDirCustomPath];
+        }]];
+        [self presentViewController:forced animated:YES completion:nil];
+        return;
+    }
+
+    AMEDirIsolation mode = [GameDirectoryResolver isolationForProfile:self.profile];
+    NSString *hint = [NSString stringWithFormat:localize(@"preference.isolation.hint", nil),
+                      [GameDirectoryResolver displayValueForProfile:self.profile]];
+    NSString *message = [hint stringByAppendingFormat:@"\n%@",
+                         localize(@"preference.isolation.nomigrate", nil)];
+
+    UIAlertController *sheet = [UIAlertController
+        alertControllerWithTitle:localize(@"i18n_str_2004", nil)
+                         message:message
+                  preferredStyle:UIAlertControllerStyleActionSheet];
+
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = self.view;
+        sheet.popoverPresentationController.sourceRect = CGRectMake(self.view.bounds.size.width / 2.0,
+                                                                    self.view.bounds.size.height / 2.0, 1, 1);
+    }
+
+    __weak typeof(self) weakSelf = self;
+    void (^apply)(AMEDirIsolation) = ^(AMEDirIsolation next) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        [GameDirectoryResolver setIsolation:next forProfile:strongSelf.profile];
+        [strongSelf saveSettings];
+        [strongSelf reloadAllTableViews];
+        [strongSelf updateHeroCard];
+    };
+
+    void (^addOption)(AMEDirIsolation, NSString *) = ^(AMEDirIsolation optionMode, NSString *key) {
+        NSString *title = localize(key, nil);
+        if (optionMode == mode) {
+            title = [@"✓ " stringByAppendingString:title];
+        }
+        [sheet addAction:[UIAlertAction actionWithTitle:title
+                                                  style:UIAlertActionStyleDefault
+                                                handler:^(UIAlertAction * _Nonnull action) {
+            apply(optionMode);
+        }]];
+    };
+
+    addOption(AMEDirIsolationShared, @"preference.isolation.option.shared");
+    addOption(AMEDirIsolationVersion, @"preference.isolation.option.version");
+
+    [sheet addAction:[UIAlertAction actionWithTitle:localize(@"preference.isolation.option.custom", nil)
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction * _Nonnull action) {
+        [weakSelf editGameDirCustomPath];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:localize(@"resman.common.cancel", nil)
+                                              style:UIAlertActionStyleCancel
+                                            handler:nil]];
+
+    [self presentViewController:sheet animated:YES completion:nil];
+}
+
+/// 编辑自定义游戏目录路径（三态之一的 custom；"." 等价于切回不隔离）
+- (void)editGameDirCustomPath {
     NSString *currentGameDir = self.profile[@"gameDir"] ?: @".";
     NSString *currentInstance = getPrefObject(@"general.game_directory") ?: @"default";
 
@@ -1225,6 +1308,7 @@ static NSString * localizeProfileTitle(NSString *title) {
 
     [alert addAction:[UIAlertAction actionWithTitle:localize(@"i18n_str_898", nil) style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         self.profile[@"gameDir"] = @".";
+        [GameDirectoryResolver setIsolation:AMEDirIsolationShared forProfile:self.profile];
         [self saveSettings];
         [self reloadAllTableViews];
         [self updateHeroCard];
@@ -1236,9 +1320,17 @@ static NSString * localizeProfileTitle(NSString *title) {
         NSString *newGameDir = alert.textFields.firstObject.text;
         newGameDir = [newGameDir stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (newGameDir.length == 0) {
-            newGameDir = @".";
+            // 空输入视为不隔离（避免退化成空路径）
+            self.profile[@"gameDir"] = @".";
+            [GameDirectoryResolver setIsolation:AMEDirIsolationShared forProfile:self.profile];
+        } else if ([newGameDir isEqualToString:@"."]) {
+            self.profile[@"gameDir"] = @".";
+            [GameDirectoryResolver setIsolation:AMEDirIsolationShared forProfile:self.profile];
+        } else {
+            // 先落 gameDir，再标 isolation=custom（非 "." 的值会被原样保留）
+            self.profile[@"gameDir"] = newGameDir;
+            [GameDirectoryResolver setIsolation:AMEDirIsolationCustom forProfile:self.profile];
         }
-        self.profile[@"gameDir"] = newGameDir;
         [self saveSettings];
         [self reloadAllTableViews];
         [self updateHeroCard];
@@ -1314,29 +1406,9 @@ static NSString * localizeProfileTitle(NSString *title) {
     return [lower containsString:@"forge"] && ![lower containsString:@"neoforge"];
 }
 
-/// 当前 profile 的 mods 目录路径
+/// 当前 profile 的 mods 目录路径（版本隔离统一决策点 GameDirectoryResolver）
 - (NSString *)currentProfileModsPath {
-    NSString *gameDir = self.profile[@"gameDir"];
-    NSString *baseDir;
-    const char *env = getenv("POJAV_GAME_DIR");
-    if (env) {
-        baseDir = [NSString stringWithUTF8String:env];
-    } else {
-        baseDir = NSHomeDirectory();
-    }
-
-    NSString *modsBase;
-    if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0 && ![gameDir isEqualToString:@"."]) {
-        if ([gameDir isAbsolutePath]) {
-            modsBase = gameDir;
-        } else {
-            modsBase = [baseDir stringByAppendingPathComponent:gameDir];
-        }
-    } else {
-        modsBase = baseDir;
-    }
-
-    NSString *modsDir = [modsBase stringByAppendingPathComponent:@"mods"];
+    NSString *modsDir = [GameDirectoryResolver pathForProfile:self.profile subdir:@"mods"];
     [[NSFileManager defaultManager] createDirectoryAtPath:modsDir withIntermediateDirectories:YES attributes:nil error:nil];
     return modsDir;
 }

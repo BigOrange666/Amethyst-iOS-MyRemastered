@@ -4,6 +4,7 @@
 //
 
 #import "AiInstancesTool.h"
+#import "GameDirectoryResolver.h"
 #import "PLProfiles.h"
 #import "LauncherPreferences.h"
 
@@ -150,26 +151,31 @@
         NSDictionary *profile = [profileDict isKindOfClass:[NSDictionary class]] ? profileDict[dirname] : nil;
         NSString *profileName = dirname;
         NSString *lastVersionId = @"";
-        NSString *gameDir = @".";
+        NSString *runDir = fullPath;
         if ([profile isKindOfClass:[NSDictionary class]]) {
             if ([profile[@"name"] isKindOfClass:[NSString class]] && [profile[@"name"] length] > 0) profileName = profile[@"name"];
             if ([profile[@"lastVersionId"] isKindOfClass:[NSString class]]) lastVersionId = profile[@"lastVersionId"];
-            if ([profile[@"gameDir"] isKindOfClass:[NSString class]] && [profile[@"gameDir"] length] > 0) gameDir = profile[@"gameDir"];
+            // 版本隔离的实例：资源在 <主目录>/versions/<版本ID>，不在 instances/<实例> 下
+            NSString *resolvedRunDir = [GameDirectoryResolver runDirectoryForProfile:profile];
+            if (resolvedRunDir.length > 0) runDir = resolvedRunDir;
         }
 
         [entries addObject:@{
             @"name": profileName ?: dirname,
-            @"gameDir": [fullPath stringByAppendingPathComponent:gameDir],
+            @"gameDir": runDir,
             @"lastVersionId": lastVersionId ?: @"",
             @"selected": @([dirname isEqualToString:currentInstanceName]),
             @"path": fullPath,
-            @"counts": [self resourceCountsForDirectory:fullPath],
+            @"counts": [self resourceCountsForDirectory:runDir],
         }];
     }
 
     // 取不到实例目录时，回退返回当前实例信息
     if (entries.count == 0) {
-        NSString *currentRoot = [[self class] currentGameRoot];
+        NSDictionary *currentProfile = profiles.selectedProfile;
+        NSString *currentRoot = ([currentProfile isKindOfClass:[NSDictionary class]] && currentProfile.count > 0)
+            ? [GameDirectoryResolver runDirectoryForProfile:currentProfile]
+            : [[self class] currentGameRoot];
         [entries addObject:@{
             @"name": [profiles selectedProfileName] ?: currentInstanceName,
             @"gameDir": currentRoot,

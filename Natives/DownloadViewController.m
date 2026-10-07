@@ -16,6 +16,7 @@
 #import "ResourcePackService.h"
 #import "DataPackService.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "LauncherPreferences.h"
 #import "VersionCardCell.h"
 #import "MinecraftResourceDownloadTask.h"
@@ -3235,8 +3236,8 @@ typedef NS_ENUM(NSInteger, ModernAssetType) {
     NSMutableDictionary *profile = [NSMutableDictionary dictionary];
     profile[@"name"] = versionId;
     profile[@"lastVersionId"] = versionId;
-    // 改回原来的"游戏目录切换"机制：所有版本共享根目录（gameDir="."）
-    // 用户通过设置中的"游戏目录切换"功能手动切换不同的 gameDir
+    // gameDir="." 是兜底值；实际隔离模式由 saveProfile:withName: 按全局默认策略
+    // （general.default_isolation）固化到 isolation 键
     profile[@"gameDir"] = @".";
     profile[@"type"] = @"custom";
     profile[@"created"] = [NSDate date].description;
@@ -3449,8 +3450,8 @@ typedef NS_ENUM(NSInteger, ModernAssetType) {
             NSMutableDictionary *profile = [NSMutableDictionary dictionary];
             profile[@"name"] = versionId;
             profile[@"lastVersionId"] = versionId;
-            // 改回原来的"游戏目录切换"机制：所有版本共享根目录（gameDir="."）
-            // 用户通过设置中的"游戏目录切换"功能手动切换不同的 gameDir
+            // gameDir="." 是兜底值；实际隔离模式由 saveProfile:withName: 按全局默认策略
+            // （general.default_isolation）固化到 isolation 键
             profile[@"gameDir"] = @".";
             profile[@"type"] = @"custom";
             profile[@"created"] = [NSDate date].description;
@@ -5711,9 +5712,8 @@ static NSString *PLSha1FromPrimaryFile(NSDictionary *primaryFile) {
 }
 
 - (NSString *)currentInstanceModsPath {
-    // 参考 ModService.m 的 existingModsFolderForProfile: 逻辑：
-    // 1. 优先读取 profile 的 gameDir，拼接 /mods
-    // 2. 若 profile 无 gameDir 或 gameDir 为 "."，回退到 $POJAV_GAME_DIR/mods
+    // 版本隔离统一决策点 GameDirectoryResolver：
+    // 隔离实例的 mods 在 <主目录>/versions/<版本ID>/mods，共享实例在主目录 mods。
     NSString *instanceName = PLProfiles.current.selectedProfileName;
     if (!instanceName) instanceName = @"default";
 
@@ -5723,31 +5723,13 @@ static NSString *PLSha1FromPrimaryFile(NSDictionary *primaryFile) {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[instanceName];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0 && ![gameDir isEqualToString:@"."]) {
-                // gameDir 是相对路径时，相对于 POJAV_GAME_DIR 解析
-                NSString *baseDir;
-                const char *env = getenv("POJAV_GAME_DIR");
-                if (env) {
-                    baseDir = [NSString stringWithUTF8String:env];
-                } else {
-                    baseDir = NSHomeDirectory();
-                }
-
-                if ([gameDir isAbsolutePath]) {
-                    modsDir = [gameDir stringByAppendingPathComponent:@"mods"];
-                } else {
-                    modsDir = [[baseDir stringByAppendingPathComponent:gameDir] stringByAppendingPathComponent:@"mods"];
-                }
-            }
+            modsDir = [GameDirectoryResolver pathForProfile:prof subdir:@"mods"];
         }
     } @catch (NSException *ex) { }
 
     if (!modsDir) {
         // 回退到 $POJAV_GAME_DIR/mods（与 FCL 默认行为一致）
-        const char *env = getenv("POJAV_GAME_DIR");
-        NSString *gameDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        modsDir = [gameDir stringByAppendingPathComponent:@"mods"];
+        modsDir = [[GameDirectoryResolver mainDirectory] stringByAppendingPathComponent:@"mods"];
     }
 
     [[NSFileManager defaultManager] createDirectoryAtPath:modsDir withIntermediateDirectories:YES attributes:nil error:nil];

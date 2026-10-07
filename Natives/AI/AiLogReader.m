@@ -4,7 +4,9 @@
 //
 
 #import "AiLogReader.h"
+#import "GameDirectoryResolver.h"
 #import "LauncherPreferences.h"
+#import "PLProfiles.h"
 
 @interface AiLogReader ()
 @property (nonatomic, copy) NSString *internalName;
@@ -72,14 +74,35 @@
     return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
 }
 
-/// 解析 instance 参数 → 实例根目录（<POJAV_HOME>/instances/<instance>，缺省当前实例）
+/// 当前 profile 的运行目录（版本隔离实例的 logs/saves 都在这里，不在实例根）
++ (NSString *)currentRunRoot {
+    NSDictionary *profile = PLProfiles.current.selectedProfile;
+    if ([profile isKindOfClass:[NSDictionary class]] && profile.count > 0) {
+        NSString *runDir = [GameDirectoryResolver runDirectoryForProfile:profile];
+        if (runDir.length > 0) return runDir;
+    }
+    return [self currentGameRoot];
+}
+
+/// 解析 instance 参数 → 日志根目录（<POJAV_HOME>/instances/<instance>，缺省当前实例）
+/// 当前实例返回的是版本隔离后的运行目录，保证能找到 <runDir>/logs/latest.log
 + (NSString *)gameRootForParams:(NSDictionary *)params {
     NSString *instance = [params[@"instance"] isKindOfClass:[NSString class]] ? params[@"instance"] : @"";
-    if (instance.length == 0) return [self currentGameRoot];
+    if (instance.length == 0) return [self currentRunRoot];
+    NSString *currentInstance = getPrefObject(@"general.game_directory") ?: @"default";
+    if ([instance isEqualToString:currentInstance]) return [self currentRunRoot];
     // 目录名安全化，防止 ../ 逃逸
     NSArray *parts = [instance componentsSeparatedByCharactersInSet:
                       [NSCharacterSet characterSetWithCharactersInString:@"/\\:"]];
     NSString *safe = [parts componentsJoinedByString:@"_"];
+    // 隔离实例的日志在 <主目录>/versions/<版本ID>/logs，不在 instances/<实例> 下；
+    // instance 名恰好是 profile 名时按它的运行目录走
+    NSDictionary *profiles = PLProfiles.current.profiles;
+    NSDictionary *prof = [profiles isKindOfClass:[NSDictionary class]] ? profiles[safe] : nil;
+    if ([prof isKindOfClass:[NSDictionary class]]) {
+        NSString *runDir = [GameDirectoryResolver runDirectoryForProfile:prof];
+        if (runDir.length > 0) return runDir;
+    }
     NSString *root = [NSString stringWithFormat:@"%@/instances/%@", [self launcherHome], safe];
     BOOL isDir = NO;
     if ([[NSFileManager defaultManager] fileExistsAtPath:root isDirectory:&isDir] && isDir) {

@@ -119,6 +119,16 @@ static CGFloat LauncherRootLayoutRightPanelWidth(UITraitCollection *trait) {
         NSString *localPath = [NSString stringWithFormat:@"%s/versions/%@", getenv("POJAV_GAME_DIR"), versionId];
         BOOL isDirectory;
         if ([fileManager fileExistsAtPath:localPath isDirectory:&isDirectory] && isDirectory) {
+            // 版本隔离后 versions/<id> 同时是运行目录（存档/模组/配置），
+            // 目录存在不再等于版本已安装，必须有 <id>.json（兜底 <id>.jar）才算
+            NSString *jsonPath = [localPath stringByAppendingPathComponent:
+                                  [versionId stringByAppendingPathExtension:@"json"]];
+            NSString *jarPath = [localPath stringByAppendingPathComponent:
+                                 [versionId stringByAppendingPathExtension:@"jar"]];
+            if (![fileManager fileExistsAtPath:jsonPath] &&
+                ![fileManager fileExistsAtPath:jarPath]) {
+                continue;
+            }
             [localVersionList addObject:@{
                 @"id": versionId,
                 @"type": @"custom"

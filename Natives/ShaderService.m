@@ -12,6 +12,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <UIKit/UIKit.h>
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "ShaderItem.h"
 #import "DownloadTaskManager.h"
 #import "DownloadTaskItem.h"
@@ -103,31 +104,16 @@
 
 #pragma mark - Shaders folder detection & scan
 
-/// 解析 profile 的 gameDir 为绝对路径。
-/// 与 ModService.resolveAbsoluteGameDirForProfile: 对齐：
-/// profile gameDir 通常是相对路径（如 "./custom_gamedir/{name}"），需相对于 POJAV_GAME_DIR 解析。
-/// 之前 ShaderService 直接使用相对路径，导致 shaderpacks 目录找不到（fileExistsAtPath 基于 cwd 解析），
-/// 用户点击下载光影按钮后没反应（实际是 ensureShadersFolderForProfile 创建目录到错误位置，
-/// 下载完成后 moveItem 失败但 handler 已切主线程报错，用户感知"无反应"）。
+/// 解析 profile 的运行目录为绝对路径（版本隔离统一决策点 GameDirectoryResolver）。
+/// 历史教训：这里曾独立拼一遍 gameDir，相对路径没 resolve 导致 shaderpacks 找不到、
+/// 用户点下载光影"没反应"。现在与 ModService 等一起收敛到 GameDirectoryResolver。
 - (nullable NSString *)resolveAbsoluteGameDirForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if (![prof isKindOfClass:[NSDictionary class]]) return nil;
-        NSString *gameDir = prof[@"gameDir"];
-        if (![gameDir isKindOfClass:[NSString class]] || gameDir.length == 0) return nil;
-        if ([gameDir isEqualToString:@"."]) {
-            const char *env = getenv("POJAV_GAME_DIR");
-            return env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        }
-        if ([gameDir isAbsolutePath]) {
-            return gameDir;
-        }
-        const char *env = getenv("POJAV_GAME_DIR");
-        NSString *baseDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        NSString *cleanGameDir = [gameDir hasPrefix:@"./"] ? [gameDir substringFromIndex:2] : gameDir;
-        return [baseDir stringByAppendingPathComponent:cleanGameDir];
+        return [GameDirectoryResolver runDirectoryForProfile:prof];
     } @catch (NSException *ex) {
         return nil;
     }
@@ -144,6 +130,11 @@
         BOOL isDir = NO;
         if ([fm fileExistsAtPath:shadersPath isDirectory:&isDir] && isDir) {
             return shadersPath;
+        }
+        // 隔离实例的 shaderpacks 只在自己的运行目录里；没建时不要回退到共享主目录（会串档）
+        NSDictionary *prof = PLProfiles.current.profiles[profile];
+        if ([prof isKindOfClass:[NSDictionary class]] && [GameDirectoryResolver profileIsIsolated:prof]) {
+            return nil;
         }
     }
 

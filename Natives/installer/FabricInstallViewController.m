@@ -6,6 +6,7 @@
 #import "ProfileSettingsViewController.h"
 #import "PickTextField.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "BackgroundManager.h"
 #import "PLMirrorCenter.h"
 #import "ios_uikit_bridge.h"
@@ -300,9 +301,8 @@ extern NSMutableArray *localVersionList;
         NSString *downloadUrl = primaryFile[@"url"];
         NSString *fileName = primaryFile[@"filename"];
         
-        // 获取 mods 文件夹路径（参考 ModService.m 的 existingModsFolderForProfile: 逻辑）
-        // 1. 优先读取 profile 的 gameDir，拼接 /mods
-        // 2. 若 profile 无 gameDir 或 gameDir 为 "."，回退到 $POJAV_GAME_DIR/mods
+        // 获取 mods 文件夹路径（版本隔离统一决策点 GameDirectoryResolver）：
+        // 隔离实例 → <主目录>/versions/<版本ID>/mods，共享实例 → 主目录 mods
         NSString *instanceName = PLProfiles.current.selectedProfileName ?: @"default";
         NSString *modsPath = nil;
 
@@ -310,23 +310,12 @@ extern NSMutableArray *localVersionList;
             NSDictionary *profiles = PLProfiles.current.profiles;
             NSDictionary *prof = profiles[instanceName];
             if ([prof isKindOfClass:[NSDictionary class]]) {
-                NSString *profGameDir = prof[@"gameDir"];
-                if ([profGameDir isKindOfClass:[NSString class]] && profGameDir.length > 0 && ![profGameDir isEqualToString:@"."]) {
-                    const char *env = getenv("POJAV_GAME_DIR");
-                    NSString *baseDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-                    if ([profGameDir isAbsolutePath]) {
-                        modsPath = [profGameDir stringByAppendingPathComponent:@"mods"];
-                    } else {
-                        modsPath = [[baseDir stringByAppendingPathComponent:profGameDir] stringByAppendingPathComponent:@"mods"];
-                    }
-                }
+                modsPath = [GameDirectoryResolver pathForProfile:prof subdir:@"mods"];
             }
         } @catch (NSException *ex) { }
 
         if (!modsPath) {
-            const char *env = getenv("POJAV_GAME_DIR");
-            NSString *gameDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-            modsPath = [gameDir stringByAppendingPathComponent:@"mods"];
+            modsPath = [[GameDirectoryResolver mainDirectory] stringByAppendingPathComponent:@"mods"];
         }
 
         // Ensure mods directory exists

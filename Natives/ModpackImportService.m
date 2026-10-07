@@ -27,6 +27,7 @@
 #import "PLPreferences.h"
 #import "UnzipKit.h"
 #import "DownloadTaskManager.h"
+#import "GameDirectoryResolver.h"
 #import "DownloadTaskItem.h"
 #import "PLTaskStages.h"
 #import "LauncherPreferences.h"
@@ -2711,6 +2712,8 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
         @"name": profileName,
         @"lastVersionId": versionId ?: @"",
         @"gameDir": gameDirRelative,
+        // 整合包强制隔离（HMCL：modpack 实例不可取消隔离）
+        @"isolation": AMEIsolationCustom,
         @"created": [self iso8601StringFromDate:[NSDate date]],
         @"type": @"modpack"
     } mutableCopy];
@@ -2809,7 +2812,16 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     if ([versionId isKindOfClass:[NSString class]] && versionId.length > 0) {
         NSString *mainVersionDir = [NSString stringWithFormat:@"%s/versions/%@", getenv("POJAV_GAME_DIR"), versionId];
         if ([fm fileExistsAtPath:mainVersionDir]) {
-            [fm removeItemAtPath:mainVersionDir error:nil];
+            // 版本隔离：versions/<id> 可能正是某个实例的运行目录（存档/模组/配置）。
+            // 只要还有 profile 引用它，就只删版本二进制，绝不整目录删除。
+            if ([GameDirectoryResolver isVersionDirectoryReferencedByProfiles:mainVersionDir]) {
+                for (NSString *fileName in @[[versionId stringByAppendingPathExtension:@"json"],
+                                             [versionId stringByAppendingPathExtension:@"jar"]]) {
+                    [fm removeItemAtPath:[mainVersionDir stringByAppendingPathComponent:fileName] error:nil];
+                }
+            } else {
+                [fm removeItemAtPath:mainVersionDir error:nil];
+            }
         }
     }
 

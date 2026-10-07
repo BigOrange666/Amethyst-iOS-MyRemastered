@@ -12,6 +12,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <UIKit/UIKit.h>
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "ModItem.h"
 #import "UnzipKit.h"
 #import "DownloadTaskManager.h"
@@ -199,32 +200,17 @@
     return data;
 }
 
-/// 解析 profile 的 gameDir 为绝对路径。
-/// profile gameDir 通常是相对路径（如 "./custom_gamedir/{name}"），需相对于 POJAV_GAME_DIR 解析。
-/// 之前直接使用相对路径会导致 mods 文件夹找不到（fileExistsAtPath 对相对路径基于 cwd 解析，
-/// 而 cwd 不一定是 POJAV_GAME_DIR）。
+/// 解析 profile 的运行目录为绝对路径（版本隔离统一决策点 GameDirectoryResolver）。
+/// 旧实现自己拼了一遍 gameDir：只有 ModService/ShaderService/导出/AI 四处各写一份，
+/// WorldService/ResourcePackService/DataPackService 漏改，版本隔离后会拿到相对路径。
+/// 现在全部收敛到 GameDirectoryResolver.runDirectoryForProfile:。
 - (nullable NSString *)resolveAbsoluteGameDirForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if (![prof isKindOfClass:[NSDictionary class]]) return nil;
-        NSString *gameDir = prof[@"gameDir"];
-        if (![gameDir isKindOfClass:[NSString class]] || gameDir.length == 0) return nil;
-        if ([gameDir isEqualToString:@"."]) {
-            // "." 表示主目录
-            const char *env = getenv("POJAV_GAME_DIR");
-            return env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        }
-        if ([gameDir isAbsolutePath]) {
-            return gameDir;
-        }
-        // 相对路径，相对于 POJAV_GAME_DIR 解析
-        const char *env = getenv("POJAV_GAME_DIR");
-        NSString *baseDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        // 去掉 "./" 前缀（如果有），stringByAppendingPathComponent 能正确处理
-        NSString *cleanGameDir = [gameDir hasPrefix:@"./"] ? [gameDir substringFromIndex:2] : gameDir;
-        return [baseDir stringByAppendingPathComponent:cleanGameDir];
+        return [GameDirectoryResolver runDirectoryForProfile:prof];
     } @catch (NSException *ex) {
         return nil;
     }
@@ -241,6 +227,12 @@
         BOOL isDir = NO;
         if ([fm fileExistsAtPath:modsPath isDirectory:&isDir] && isDir) {
             return modsPath;
+        }
+        // 隔离实例的 mods 只在自己的运行目录里；目录还没建时不要回退到共享主目录，
+        // 否则隔离实例会看到并能改到别人的模组（串档）
+        NSDictionary *prof = PLProfiles.current.profiles[profile];
+        if ([prof isKindOfClass:[NSDictionary class]] && [GameDirectoryResolver profileIsIsolated:prof]) {
+            return nil;
         }
     }
 
@@ -533,6 +525,11 @@
            progress:(nullable void (^)(NSProgress *downloadProgress))progress
          completion:(ModDownloadHandler)completion {
     NSString *modsFolder = [self existingModsFolderForProfile:profileName];
+    if (!modsFolder) {
+        // 目录还没建起来（新隔离实例的第一次下载、或用户删过 mods）：
+        // 直接按 runDirectory 创建，别报「找不到 mods 目录」。
+        modsFolder = [self ensureModsFolderForProfile:profileName error:nil];
+    }
     if (!modsFolder) {
         if (completion) {
             NSError *error = [NSError errorWithDomain:@"ModServiceError" code:1 userInfo:@{NSLocalizedDescriptionKey:localize(@"i18n_str_453", nil)}];

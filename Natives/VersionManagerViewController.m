@@ -1,6 +1,7 @@
 #import "VersionManagerViewController.h"
 #import "BackgroundManager.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "ProfileSettingsViewController.h"
 #import "ModsManagerViewController.h"
 #import "ShadersManagerViewController.h"
@@ -1333,8 +1334,8 @@ static NSInteger const kSectionVersions    = 1;
         NSDictionary *profile = PLProfiles.current.profiles[profileName];
         NSString *versionId = profile[@"lastVersionId"] ?: localize(@"i18n_str_1052", nil);
         BOOL isSelected = [profileName isEqualToString:self.selectedProfile];
-        NSString *gameDir = profile[@"gameDir"] ?: @".";
-        BOOL isolated = ![gameDir isEqualToString:@"."];
+        // 统一判定隔离状态（GameDirectoryResolver：整合包/版本隔离/自定义路径都算隔离）
+        BOOL isolated = profile && [GameDirectoryResolver profileIsIsolated:profile];
         NSString *lastPlayed = [self formatLastPlayed:profile[@"lastPlayed"]];
 
         [cell configureWithName:profileName version:versionId isSelected:isSelected isolated:isolated lastPlayed:lastPlayed];

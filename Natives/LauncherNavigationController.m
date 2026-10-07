@@ -207,8 +207,17 @@ static void *ProgressObserverContext = &ProgressObserverContext;
 - (BOOL)isVersionInstalled:(NSString *)versionId {
     NSString *localPath = [NSString stringWithFormat:@"%s/versions/%@", getenv("POJAV_GAME_DIR"), versionId];
     BOOL isDirectory;
-    [NSFileManager.defaultManager fileExistsAtPath:localPath isDirectory:&isDirectory];
-    return isDirectory;
+    if (![NSFileManager.defaultManager fileExistsAtPath:localPath isDirectory:&isDirectory] || !isDirectory) {
+        return NO;
+    }
+    // 版本隔离后 versions/<id> 也是运行目录（存档/模组/配置），
+    // 目录存在不等于版本已安装，必须有 <id>.json（兜底 <id>.jar）才算
+    NSString *jsonPath = [localPath stringByAppendingPathComponent:
+                          [versionId stringByAppendingPathExtension:@"json"]];
+    NSString *jarPath = [localPath stringByAppendingPathComponent:
+                         [versionId stringByAppendingPathExtension:@"jar"]];
+    return [NSFileManager.defaultManager fileExistsAtPath:jsonPath] ||
+           [NSFileManager.defaultManager fileExistsAtPath:jarPath];
 }
 
 - (void)fetchLocalVersionList {

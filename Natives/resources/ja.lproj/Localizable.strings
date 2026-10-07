@@ -1468,7 +1468,7 @@
 "i18n_str_878" = "组件安装";
 "i18n_str_879" = "高级设置";
 "i18n_str_880" = "服务器";
-"i18n_str_881" = "游戏目录决定存档/模组/配置文件的隔离位置\n\".\" = 使用当前游戏目录切换选中的实例\n点击可修改为相对/绝对路径实现版本隔离";
+"i18n_str_881" = "ゲームディレクトリはセーブ・Mod・設定ファイルの置き場所を決定します。\n隔離しない = 現在のゲームディレクトリを共有、バージョン隔離 = versions/<バージョンID>；\n上の“ゲームディレクトリ”行でモード切り替えやカスタムパスの設定ができます。";
 "i18n_str_882" = "Fabric API：Fabric 模组的依赖库（仅 Fabric 加载器有效）\nOptiFine：OptiFine 优化模组（仅原版/Forge 有效）";
 "i18n_str_885" = "仅 Fabric 有效";
 "i18n_str_886" = "仅原版/Forge 有效";
@@ -1956,3 +1956,15 @@
 
 "preference.auto" = "自动";
 "preference.auto_select" = "自动选择";
+
+"preference.isolation.hint" = "現在のゲームディレクトリ：%@";
+"preference.isolation.nomigrate" = "隔離モードの切り替えで、既存のセーブ・Mod・設定ファイルは移動されません。";
+"preference.isolation.option.shared" = "隔離しない（現在のゲームディレクトリを共有）";
+"preference.isolation.option.version" = "バージョン隔離（versions/<バージョンID>）";
+"preference.isolation.option.custom" = "カスタムパス…";
+"preference.isolation.forced" = "モッドパックのインスタンスは隔離を維持する必要があり、カスタムパスのみ変更できます。";
+"preference.isolation.default.title" = "新規インスタンスの既定の隔離";
+"preference.isolation.default.modded" = "Mod ローダー付きのみ隔離（推奨）";
+"preference.isolation.default.version" = "すべての新規インスタンスを隔離";
+"preference.isolation.default.shared" = "隔離しない";
+"preference.detail.default_isolation" = "インスタンス作成時にのみ適用され、既存のインスタンスには影響しません。";

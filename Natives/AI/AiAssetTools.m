@@ -29,6 +29,7 @@
 
 #import "AiAssetTools.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "LauncherPreferences.h"
 #import "ModService.h"
 #import "ShaderService.h"
@@ -1111,25 +1112,13 @@ static BOOL aiIsLatestAlias(NSString *s) {
         NSDictionary *profiles = [PLProfiles current].profiles;
         NSDictionary *prof = [profiles isKindOfClass:[NSDictionary class]] ? profiles[profile] : nil;
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                if ([gameDir isEqualToString:@"."]) {
-                    const char *env = getenv("POJAV_GAME_DIR");
-                    return env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-                }
-                if ([gameDir isAbsolutePath]) return gameDir;
-                const char *env = getenv("POJAV_GAME_DIR");
-                NSString *base = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-                NSString *clean = [gameDir hasPrefix:@"./"] ? [gameDir substringFromIndex:2] : gameDir;
-                return [base stringByAppendingPathComponent:clean];
-            }
+            // 版本隔离统一决策点：隔离实例落在 <主目录>/versions/<版本ID>
+            return [GameDirectoryResolver runDirectoryForProfile:prof];
         }
     } @catch (NSException *ex) {
         // ignore
     }
-    const char *root = getenv("POJAV_GAME_DIR");
-    if (root && strlen(root) > 0) return [NSString stringWithUTF8String:root];
-    return NSHomeDirectory();
+    return [GameDirectoryResolver mainDirectory];
 }
 
 + (BOOL)isGameVersionInstalled:(NSString *)mcVersion inGameDir:(NSString *)gameDir {
@@ -1139,8 +1128,16 @@ static BOOL aiIsLatestAlias(NSString *s) {
     // 1. <gameDir>/versions/<mcVersion>/（目录含 .json）
     NSString *versionsDir = [gameDir stringByAppendingPathComponent:@"versions"];
     NSString *verPath = [versionsDir stringByAppendingPathComponent:mcVersion];
-    if ([fm fileExistsAtPath:verPath isDirectory:&isDir] && isDir) return YES;
+    // 版本隔离后 versions/<id> 同时是运行目录：只存在目录不算已安装，
+    // 必须有 <id>.json（或 <id>.jar）才算
     if ([fm fileExistsAtPath:[verPath stringByAppendingPathExtension:@"json"]]) return YES;
+    if ([fm fileExistsAtPath:[verPath stringByAppendingPathExtension:@"jar"]]) return YES;
+    if ([fm fileExistsAtPath:verPath isDirectory:&isDir] && isDir) {
+        if ([fm fileExistsAtPath:[verPath stringByAppendingPathComponent:
+                                [mcVersion stringByAppendingPathExtension:@"json"]]]) return YES;
+        if ([fm fileExistsAtPath:[verPath stringByAppendingPathComponent:
+                                [mcVersion stringByAppendingPathExtension:@"jar"]]]) return YES;
+    }
     // 2. <gameDir>/<mcVersion>.json
     if ([fm fileExistsAtPath:[gameDir stringByAppendingPathComponent:[mcVersion stringByAppendingPathExtension:@"json"]]]) return YES;
     return NO;

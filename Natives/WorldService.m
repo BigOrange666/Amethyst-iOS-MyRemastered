@@ -13,6 +13,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <UIKit/UIKit.h>
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "WorldItem.h"
 #import "UZKArchive.h"
 #import "DownloadTaskManager.h"
@@ -68,25 +69,18 @@
 
 #pragma mark - 工具方法
 
-// 解析 profile 的 gameDir，返回 gameDir 或 nil
+// 解析 profile 的运行目录（版本隔离的唯一决策点 GameDirectoryResolver），返回绝对路径
 - (nullable NSString *)gameDirForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                return gameDir;
-            }
+            return [GameDirectoryResolver runDirectoryForProfile:prof];
         }
     } @catch (NSException *ex) { }
 
-    const char *gameDirC = getenv("POJAV_GAME_DIR");
-    if (gameDirC) {
-        return [NSString stringWithUTF8String:gameDirC];
-    }
-    return nil;
+    return [GameDirectoryResolver mainDirectory];
 }
 
 #pragma mark - Saves folder detection & scan
@@ -100,14 +94,16 @@
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                NSString *savesPath = [gameDir stringByAppendingPathComponent:@"saves"];
-                BOOL isDir = NO;
-                if ([fm fileExistsAtPath:savesPath isDirectory:&isDir] && isDir) {
-                    return savesPath;
-                }
+            // 隔离模式下存档在 <主目录>/versions/<版本ID>/saves，
+            // 这里必须走 runDirectory，不能再拿原始 gameDir 相对路径去拼。
+            NSString *savesPath = [[GameDirectoryResolver runDirectoryForProfile:prof]
+                                   stringByAppendingPathComponent:@"saves"];
+            BOOL isDir = NO;
+            if ([fm fileExistsAtPath:savesPath isDirectory:&isDir] && isDir) {
+                return savesPath;
             }
+            // 存档目录还没建：不要回退到主目录（隔离实例会串档），交给 ensure 去创建
+            return nil;
         }
     } @catch (NSException *ex) { }
 
@@ -134,19 +130,13 @@
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                savesPath = [gameDir stringByAppendingPathComponent:@"saves"];
-            }
+            savesPath = [[GameDirectoryResolver runDirectoryForProfile:prof]
+                         stringByAppendingPathComponent:@"saves"];
         }
     } @catch (NSException *ex) { }
 
     if (!savesPath) {
-        const char *gameDirC = getenv("POJAV_GAME_DIR");
-        if (gameDirC) {
-            NSString *gameDir = [NSString stringWithUTF8String:gameDirC];
-            savesPath = [gameDir stringByAppendingPathComponent:@"saves"];
-        }
+        savesPath = [[GameDirectoryResolver mainDirectory] stringByAppendingPathComponent:@"saves"];
     }
 
     if (!savesPath) {

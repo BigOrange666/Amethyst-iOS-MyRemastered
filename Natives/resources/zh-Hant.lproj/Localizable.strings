@@ -1469,7 +1469,7 @@
 "i18n_str_878" = "组件安装";
 "i18n_str_879" = "高级设置";
 "i18n_str_880" = "服务器";
-"i18n_str_881" = "游戏目录决定存档/模组/配置文件的隔离位置\n\".\" = 使用当前游戏目录切换选中的实例\n点击可修改为相对/绝对路径实现版本隔离";
+"i18n_str_881" = "遊戲資料夾決定存檔/模組/設定檔的位置。\n不隔離 = 共用目前遊戲目錄；版本隔離 = versions/<版本ID>；\n點擊上方“遊戲目錄”可切換隔離方式或設定自訂路徑。";
 "i18n_str_882" = "Fabric API：Fabric 模组的依赖库（仅 Fabric 加载器有效）\nOptiFine：OptiFine 优化模组（仅原版/Forge 有效）";
 "i18n_str_885" = "仅 Fabric 有效";
 "i18n_str_886" = "仅原版/Forge 有效";
@@ -1985,3 +1985,15 @@
 "update_dialog.update" = "更新";
 "preference.title.auto_check_update" = "啟動時檢查更新";
 "preference.detail.auto_check_update" = "啟動啟動器時自動檢查 GitHub Releases。每小時最多檢查一次，被你選擇忽略的版本將不再提示。";
+
+"preference.isolation.hint" = "目前遊戲目錄：%@";
+"preference.isolation.nomigrate" = "切換隔離方式不會移動已存在的存檔、模組與設定檔。";
+"preference.isolation.option.shared" = "不隔離（共用目前遊戲目錄）";
+"preference.isolation.option.version" = "版本隔離（versions/<版本ID>）";
+"preference.isolation.option.custom" = "自訂路徑…";
+"preference.isolation.forced" = "整合包實例必須保持隔離，只能修改自訂路徑。";
+"preference.isolation.default.title" = "新實例預設隔離策略";
+"preference.isolation.default.modded" = "僅隔離含 Mod 載入器的實例（建議）";
+"preference.isolation.default.version" = "隔離所有新實例";
+"preference.isolation.default.shared" = "從不隔離";
+"preference.detail.default_isolation" = "僅在建立實例時生效，既有實例不受影響。";

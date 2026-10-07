@@ -15,6 +15,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <UIKit/UIKit.h>
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "DataPackItem.h"
 #import "UZKArchive.h"
 #import "DownloadTaskManager.h"
@@ -129,25 +130,18 @@
     }
 }
 
-// 解析 profile 的 gameDir，返回 gameDir 或 nil
+// 解析 profile 的运行目录（版本隔离唯一决策点），返回绝对路径
 - (nullable NSString *)gameDirForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                return gameDir;
-            }
+            return [GameDirectoryResolver runDirectoryForProfile:prof];
         }
     } @catch (NSException *ex) { }
 
-    const char *gameDirC = getenv("POJAV_GAME_DIR");
-    if (gameDirC) {
-        return [NSString stringWithUTF8String:gameDirC];
-    }
-    return nil;
+    return [GameDirectoryResolver mainDirectory];
 }
 
 #pragma mark - DataPacks folder detection & scan
@@ -161,14 +155,14 @@
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                NSString *dataPacksPath = [gameDir stringByAppendingPathComponent:@"datapacks"];
-                BOOL isDir = NO;
-                if ([fm fileExistsAtPath:dataPacksPath isDirectory:&isDir] && isDir) {
-                    return dataPacksPath;
-                }
+            NSString *dataPacksPath = [[GameDirectoryResolver runDirectoryForProfile:prof]
+                                       stringByAppendingPathComponent:@"datapacks"];
+            BOOL isDir = NO;
+            if ([fm fileExistsAtPath:dataPacksPath isDirectory:&isDir] && isDir) {
+                return dataPacksPath;
             }
+            // 隔离实例目录还没建：不要回退到主目录（会串档），交给 ensure 创建
+            return nil;
         }
     } @catch (NSException *ex) { }
 
@@ -195,19 +189,14 @@
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                dataPacksPath = [gameDir stringByAppendingPathComponent:@"datapacks"];
-            }
+            dataPacksPath = [[GameDirectoryResolver runDirectoryForProfile:prof]
+                             stringByAppendingPathComponent:@"datapacks"];
         }
     } @catch (NSException *ex) { }
 
     if (!dataPacksPath) {
-        const char *gameDirC = getenv("POJAV_GAME_DIR");
-        if (gameDirC) {
-            NSString *gameDir = [NSString stringWithUTF8String:gameDirC];
-            dataPacksPath = [gameDir stringByAppendingPathComponent:@"datapacks"];
-        }
+        dataPacksPath = [[GameDirectoryResolver mainDirectory]
+                         stringByAppendingPathComponent:@"datapacks"];
     }
 
     if (!dataPacksPath) {

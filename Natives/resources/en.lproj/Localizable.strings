@@ -1479,7 +1479,7 @@
 "i18n_str_878" = "Component installation";
 "i18n_str_879" = "Advanced settings";
 "i18n_str_880" = "Server";
-"i18n_str_881" = "The game directory determines the isolated location of saves/mods/config files.\n\".\" keeps the current game directory for the selected instance;\ntap to change it to a relative/absolute path for per-version isolation.";
+"i18n_str_881" = "Game directory controls where saves/mods/config files live.\nNo isolation = share the current game directory; version isolation = versions/<version id>;\nuse the \"Game directory\" row above to switch mode or set a custom path.";
 "i18n_str_882" = "Fabric API: dependency library for Fabric mods (only works with the Fabric loader)\nOptiFine: OptiFine optimization mod (only works with Vanilla/Forge)";
 "i18n_str_885" = "Only works with Fabric";
 "i18n_str_886" = "Only works with Vanilla/Forge";
@@ -1996,3 +1996,15 @@
 "update_dialog.update" = "Update";
 "preference.title.auto_check_update" = "Check for Updates on Launch";
 "preference.detail.auto_check_update" = "Automatically check GitHub Releases when the launcher starts. At most once per hour; versions you chose to ignore are not shown again.";
+
+"preference.isolation.hint" = "Current game directory: %@";
+"preference.isolation.nomigrate" = "Switching the isolation mode does not move existing saves, mods or configuration files.";
+"preference.isolation.option.shared" = "No isolation (share the current game directory)";
+"preference.isolation.option.version" = "Version isolation (versions/<version id>)";
+"preference.isolation.option.custom" = "Custom path…";
+"preference.isolation.forced" = "Modpack instances must stay isolated; only a custom path can be changed.";
+"preference.isolation.default.title" = "Default isolation for new instances";
+"preference.isolation.default.modded" = "Only modded instances (recommended)";
+"preference.isolation.default.version" = "All new instances";
+"preference.isolation.default.shared" = "Never";
+"preference.detail.default_isolation" = "Applied once when an instance is created; existing instances are not affected.";

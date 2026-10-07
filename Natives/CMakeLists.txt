@@ -285,6 +285,8 @@ add_executable(AngelAuraAmethyst
   external/fishhook/fishhook.c
   UIKit+hook.m
   ScreenUtils.m
+  # 版本隔离：运行目录唯一决策点（对齐 HMCL computeRunDirectory）
+  GameDirectoryResolver.m
 
   authenticator/BaseAuthenticator.m
   authenticator/LocalAuthenticator.m

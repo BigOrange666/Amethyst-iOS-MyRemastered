@@ -1,6 +1,7 @@
 #import "utils.h"
 #import "ModpackExportService.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "ModService.h"
 #import "external/UnzipKit/UZKArchive.h"
 #import <CommonCrypto/CommonCrypto.h>
@@ -864,25 +865,14 @@
     }
 }
 
+/// 解析 profile 的运行目录为绝对路径（版本隔离统一决策点 GameDirectoryResolver）
 - (nullable NSString *)resolveAbsoluteGameDirForProfile:(NSString *)profileName {
     NSString *profile = profileName.length ? profileName : @"default";
     @try {
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if (![prof isKindOfClass:[NSDictionary class]]) return nil;
-        NSString *gameDir = prof[@"gameDir"];
-        if (![gameDir isKindOfClass:[NSString class]] || gameDir.length == 0) return nil;
-        if ([gameDir isEqualToString:@"."]) {
-            const char *env = getenv("POJAV_GAME_DIR");
-            return env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        }
-        if ([gameDir isAbsolutePath]) {
-            return gameDir;
-        }
-        const char *env = getenv("POJAV_GAME_DIR");
-        NSString *baseDir = env ? [NSString stringWithUTF8String:env] : NSHomeDirectory();
-        NSString *cleanGameDir = [gameDir hasPrefix:@"./"] ? [gameDir substringFromIndex:2] : gameDir;
-        return [baseDir stringByAppendingPathComponent:cleanGameDir];
+        return [GameDirectoryResolver runDirectoryForProfile:prof];
     } @catch (NSException *ex) {
         return nil;
     }

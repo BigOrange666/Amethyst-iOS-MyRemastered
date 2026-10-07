@@ -14,6 +14,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <UIKit/UIKit.h>
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 #import "ResourcePackItem.h"
 #import "UZKArchive.h"
 #import "DownloadTaskManager.h"
@@ -139,14 +140,14 @@
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                NSString *resourcePacksPath = [gameDir stringByAppendingPathComponent:@"resourcepacks"];
-                BOOL isDir = NO;
-                if ([fm fileExistsAtPath:resourcePacksPath isDirectory:&isDir] && isDir) {
-                    return resourcePacksPath;
-                }
+            NSString *resourcePacksPath = [[GameDirectoryResolver runDirectoryForProfile:prof]
+                                           stringByAppendingPathComponent:@"resourcepacks"];
+            BOOL isDir = NO;
+            if ([fm fileExistsAtPath:resourcePacksPath isDirectory:&isDir] && isDir) {
+                return resourcePacksPath;
             }
+            // 隔离实例目录还没建：不要回退到主目录（会串档），交给 ensure 创建
+            return nil;
         }
     } @catch (NSException *ex) { }
 
@@ -173,19 +174,14 @@
         NSDictionary *profiles = PLProfiles.current.profiles;
         NSDictionary *prof = profiles[profile];
         if ([prof isKindOfClass:[NSDictionary class]]) {
-            NSString *gameDir = prof[@"gameDir"];
-            if ([gameDir isKindOfClass:[NSString class]] && gameDir.length > 0) {
-                resourcePacksPath = [gameDir stringByAppendingPathComponent:@"resourcepacks"];
-            }
+            resourcePacksPath = [[GameDirectoryResolver runDirectoryForProfile:prof]
+                                 stringByAppendingPathComponent:@"resourcepacks"];
         }
     } @catch (NSException *ex) { }
 
     if (!resourcePacksPath) {
-        const char *gameDirC = getenv("POJAV_GAME_DIR");
-        if (gameDirC) {
-            NSString *gameDir = [NSString stringWithUTF8String:gameDirC];
-            resourcePacksPath = [gameDir stringByAppendingPathComponent:@"resourcepacks"];
-        }
+        resourcePacksPath = [[GameDirectoryResolver mainDirectory]
+                             stringByAppendingPathComponent:@"resourcepacks"];
     }
 
     if (!resourcePacksPath) {
@@ -332,15 +328,14 @@
             NSDictionary *profiles = PLProfiles.current.profiles;
             NSDictionary *prof = profiles[profile];
             if ([prof isKindOfClass:[NSDictionary class]]) {
-                gameDir = prof[@"gameDir"];
+                // 走 runDirectory：隔离实例的 resourcepacks 在 versions/<id>/ 下，
+                // 原来直接拿 gameDir 拼会在版本隔离时落错目录。
+                gameDir = [GameDirectoryResolver runDirectoryForProfile:prof];
             }
         } @catch (NSException *ex) { }
 
         if (!gameDir) {
-            const char *gameDirC = getenv("POJAV_GAME_DIR");
-            if (gameDirC) {
-                gameDir = [NSString stringWithUTF8String:gameDirC];
-            }
+            gameDir = [GameDirectoryResolver mainDirectory];
         }
 
         if (gameDir) {

@@ -367,6 +367,25 @@
                   localize(@"preference.title.mod_mirror-mcim", nil)
               ]
             },
+            // 新建实例的默认版本隔离策略（对齐 HMCL DefaultIsolationType：
+            // 只在创建实例时求值一次，存量实例不受影响）
+            @{@"key": @"default_isolation",
+              @"title": localize(@"preference.isolation.default.title", nil),
+              @"hasDetail": @YES,
+              @"icon": @"folder.badge.gearshape",
+              @"type": self.typePickField,
+              @"enableCondition": whenNotInGame,
+              @"pickKeys": @[
+                  @"modded",
+                  @"always",
+                  @"never"
+              ],
+              @"pickList": @[
+                  localize(@"preference.isolation.default.modded", nil),
+                  localize(@"preference.isolation.default.version", nil),
+                  localize(@"preference.isolation.default.shared", nil)
+              ]
+            },
             @{@"key": @"ui_layout",
               @"title": localize(@"i18n_str_376", nil),
               @"hasDetail": @YES,

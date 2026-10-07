@@ -18,6 +18,7 @@
 #import "BackgroundManager.h"
 #import "ModpackExportService.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 
 @interface ModpackExportViewController () <UITextFieldDelegate, UITableViewDataSource, UITableViewDelegate>
 
@@ -240,7 +241,7 @@
         return;
     }
     NSString *lastVersionId = profile[@"lastVersionId"] ?: @"";
-    NSString *gameDir = profile[@"gameDir"] ?: @".";
+    NSString *gameDir = [GameDirectoryResolver displayValueForProfile:profile];
     NSDictionary *parsed = [ModpackExportService parseVersionId:lastVersionId];
     NSString *mcVer = parsed[@"minecraft"] ?: localize(@"i18n_str_121", nil);
     NSString *loader = parsed[@"loader"] ?: @"vanilla";

@@ -36,6 +36,7 @@
 #import "LauncherPreferences.h"
 #import "PLLogOutputView.h"
 #import "PLProfiles.h"
+#import "GameDirectoryResolver.h"
 
 #define fm NSFileManager.defaultManager
 
@@ -1304,24 +1305,59 @@ int launchJVM(NSString *accountId, id launchTarget, int width, int height, int m
         setenv("AMETHYST_GRAPHICS_API", graphicsApi.UTF8String, 1);
         NSLog(@"[JavaLauncher] GRAPHICS_API is set to %@\n", graphicsApi);
 
-        // Setup gameDir
-        gameDir = [NSString stringWithFormat:@"%s/instances/%@/%@",
-            getenv("POJAV_HOME"), getPrefObject(@"general.game_directory"),
-            [PLProfiles resolveKeyForCurrentProfile:@"gameDir"]]
-            .stringByStandardizingPath;
+        // Setup gameDir —— 版本隔离的唯一决策点。
+        // 对齐 HMCL computeRunDirectory：整合包强制隔离 → 隔离模式走
+        // <主目录>/versions/<版本ID> → 自定义路径 → 不隔离回落主目录。
+        // 旧实现（$POJAV_HOME/instances/<实例>/<profile.gameDir>）等价于
+        // 「共享目录 + 手填相对路径」，缺少 mode 语义，切换版本时不会跟着变。
+        NSDictionary *launchProfile = PLProfiles.current.selectedProfile;
+        if (![launchProfile isKindOfClass:NSDictionary.class]) {
+            launchProfile = @{};
+        }
+        // launchTarget = 本次实际启动的版本（字典含 id / 字符串为版本 id 或 jar 路径）。
+        // 用它覆盖 profile.lastVersionId，"latest-release" 这类别名才能落到真实版本目录。
+        NSString *launchVersionId = nil;
+        if ([launchTarget isKindOfClass:NSDictionary.class]) {
+            id vid = ((NSDictionary *)launchTarget)[@"id"];
+            if ([vid isKindOfClass:[NSString class]] && [(NSString *)vid length] > 0) {
+                launchVersionId = (NSString *)vid;
+            }
+        } else if ([launchTarget isKindOfClass:NSString.class] &&
+                   [(NSString *)launchTarget rangeOfString:@"/"].location == NSNotFound) {
+            launchVersionId = (NSString *)launchTarget;
+        }
+        gameDir = [GameDirectoryResolver runDirectoryForProfile:launchProfile
+                                                       versionId:launchVersionId];
+        if (gameDir.length == 0) {
+            gameDir = [GameDirectoryResolver mainDirectory];
+        }
+        // 隔离目录可能尚未存在（首次开启隔离、或版本目录刚被清过），
+        // 这里补建，否则下方 chdir 会失败、user.dir 落到未知目录。
+        NSError *gameDirCreateError = nil;
+        if (![NSFileManager.defaultManager createDirectoryAtPath:gameDir
+                                     withIntermediateDirectories:YES
+                                                      attributes:nil
+                                                           error:&gameDirCreateError]) {
+            NSLog(@"[JavaLauncher] 创建运行目录失败: %@ (%@)",
+                  gameDir, gameDirCreateError.localizedDescription ?: @"-");
+            gameDir = [GameDirectoryResolver mainDirectory];
+        }
+        NSLog(@"[JavaLauncher] runDirectory=%@ (isolation=%ld, versionId=%@, profile=%@)",
+              gameDir,
+              (long)[GameDirectoryResolver isolationForProfile:launchProfile versionId:launchVersionId],
+              launchVersionId ?: [GameDirectoryResolver effectiveVersionIdForProfile:launchProfile] ?: @"-",
+              launchProfile[@"name"] ?: @"-");
 
         // Forge 1.7.10~1.12.2 的启动画面（SplashProgress）在独立线程做 GL 纹理创建，
         // 在 iOS 的 GL 翻译栈（NG-GL4ES/ANGLE/MobileGlues 等）下必然触发
         // "Texture creation: Invalid enum" → "Splash thread" 崩溃（Forge 官方+ PojavLauncher
         // 对这类 GPU/驱动兼容性问题的标准处理都是关掉启动画面）。
-        // Forge 1.12.2 官方源码从 Minecraft.getMinecraft().mcDataDir 读取
-        // config/splash.properties（enabled=false），SplashProgress.start()
-        // 读到 enabled=false 即整体跳过。此处在运行目录预置该文件。
-        NSString *splashVersionId = [launchTarget[@"id"] isKindOfClass:NSString.class]
-            ? launchTarget[@"id"] : PLProfiles.current.selectedProfile[@"lastVersionId"];
+        // 版本 id 含 forge（含 neoforge 的 1.20.1，无副作用）时，在其运行目录预置
+        // config/splash.properties（enabled=false），SplashProgress 启动时读到即跳过。
+        NSString *splashCheckId = launchVersionId.length > 0 ? launchVersionId : launchProfile[@"lastVersionId"];
         if (gameDir.length > 0 &&
-            [splashVersionId isKindOfClass:NSString.class] &&
-            [splashVersionId localizedCaseInsensitiveContainsString:@"forge"]) {
+            [splashCheckId isKindOfClass:[NSString class]] &&
+            [splashCheckId localizedCaseInsensitiveContainsString:@"forge"]) {
             NSString *configDir = [gameDir stringByAppendingPathComponent:@"config"];
             [NSFileManager.defaultManager createDirectoryAtPath:configDir
                                      withIntermediateDirectories:YES
