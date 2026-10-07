@@ -171,10 +171,32 @@ static PLProfiles* current;
     id gameDir = profile[@"gameDir"];
     BOOL hasOwnGameDir = [gameDir isKindOfClass:[NSString class]] &&
                          ((NSString *)gameDir).length > 0 && ![(NSString *)gameDir isEqualToString:@"."];
-    if (isNewProfile && !hasOwnGameDir && ![profile[@"isolation"] isKindOfClass:[NSString class]]) {
-        [GameDirectoryResolver applyDefaultIsolationToProfile:profile
-                                                       modded:[[self class] profileLooksModded:profile]];
+
+    if (isNewProfile) {
+        // 首次注册：按默认策略固化（不覆盖调用方已明确的 isolation/gameDir）
+        if (!hasOwnGameDir && ![profile[@"isolation"] isKindOfClass:[NSString class]]) {
+            [GameDirectoryResolver applyDefaultIsolationToProfile:profile
+                                                           modded:[[self class] profileLooksModded:profile]];
+        }
+    } else {
+        // 存量 profile 重注册（安装器/下载流程总是传 gameDir="." 且不带 isolation 的裸 dict）：
+        // 若调用方没明确指定隔离与目录，则继承上一次写入的 isolation/gameDir，
+        // 避免重下/重装同版本加载器把已固化的隔离模式静默打回共享目录。
+        BOOL incomingHasIsolation = [profile[@"isolation"] isKindOfClass:[NSString class]];
+        if (!incomingHasIsolation && !hasOwnGameDir) {
+            id prevIsolation = previous[@"isolation"];
+            id prevGameDir = previous[@"gameDir"];
+            if ([prevIsolation isKindOfClass:[NSString class]] && ((NSString *)prevIsolation).length > 0) {
+                profile[@"isolation"] = prevIsolation;
+            }
+            if ([prevGameDir isKindOfClass:[NSString class]] && ((NSString *)prevGameDir).length > 0) {
+                profile[@"gameDir"] = prevGameDir;
+            }
+        }
     }
+
+    NSLog(@"[PLProfiles] saveProfile name=%@ isNew=%d prevIsolation=%@ prevGameDir=%@ -> isolation=%@ gameDir=%@",
+          name, isNewProfile, previous[@"isolation"], previous[@"gameDir"], profile[@"isolation"], profile[@"gameDir"]);
 
     self.profileDict[@"profiles"][name] = profile;
     [self save];
