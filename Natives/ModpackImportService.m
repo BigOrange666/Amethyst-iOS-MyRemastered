@@ -2345,10 +2345,10 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     // Forge/NeoForge: 下载 installer.jar 并调用直装器写入 modpack 的 gameDir
     // 直装器会写完整的 version.json（含正确的 mainClass、arguments、libraries）+ 下载 Forge 库
     // 这样整合包启动时能正确加载 Forge，不再因占位 JSON 缺库/缺参数而崩溃
-    NSString *installerURL = [self buildInstallerURLForLoader:loader
-                                               loaderVersion:loaderVersion
-                                              minecraftVersion:minecraftVersion];
-    if (!installerURL) {
+    NSArray<NSString *> *installerURLs = [self installerURLCandidatesForLoader:loader
+                                                                loaderVersion:loaderVersion
+                                                           minecraftVersion:minecraftVersion];
+    if (installerURLs.count == 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"ModpackImportError"
                                          code:4003
@@ -2376,10 +2376,21 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     NSString *installerTaskId = installerItem.taskId;
 
     NSError *dlError = nil;
-    if (![self downloadFileFromURL:installerURL toPath:tmpInstallerPath taskId:installerTaskId resourceType:PLMirrorResourceTypeModLoader error:&dlError]) {
+    NSString *installerURL = nil;
+    BOOL installerDownloaded = NO;
+    for (NSString *candidate in installerURLs) {
+        dlError = nil;
+        if ([self downloadFileFromURL:candidate toPath:tmpInstallerPath taskId:installerTaskId resourceType:PLMirrorResourceTypeModLoader error:&dlError]) {
+            installerURL = candidate;
+            installerDownloaded = YES;
+            break;
+        }
+        NSLog(@"[ModpackImport] %@ installer candidate failed: %@", loader, candidate);
+    }
+    if (!installerDownloaded) {
         // installer.jar 下载失败：写显式失败的占位 JSON（mainClass 指向不存在的类，启动时会显式报错，
         // 避免误装作 vanilla MC 让用户以为 mods 生效）
-        NSLog(@"[ModpackImport] %@ installer.jar download failed, falling back to placeholder JSON: %@", loader, installerURL);
+        NSLog(@"[ModpackImport] %@ installer.jar download failed (tried %lu candidates), falling back to placeholder JSON: %@", loader, (unsigned long)installerURLs.count, installerURLs);
         NSInteger javaMajor = [self javaMajorVersionForMC:minecraftVersion];
         NSDictionary *placeholderJSON = @{
             @"_comment_": [NSString stringWithFormat:localize(@"i18n_str_555", nil), loader, loaderVersion],
@@ -2600,43 +2611,63 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     return YES;
 }
 
-/// 根据 loader 类型构造 installer.jar 下载 URL
-/// Forge: https://maven.minecraftforge.net/net/minecraftforge/forge/<mc>-<loader>/forge-<mc>-<loader>-installer.jar
-/// NeoForge 1.20.1: https://maven.neoforged.net/releases/net/neoforged/forge/<loader>/forge-<loader>-installer.jar
-/// NeoForge 其他: https://maven.neoforged.net/releases/net/neoforged/neoforge/<loader>/neoforge-<loader>-installer.jar
+/// 根据 loader 类型构造 installer.jar 的候选下载 URL 列表（按优先级排序，由调用方依次尝试）
+/// Forge 的 maven 坐标格式随版本变化，单一拼接极易拼错导致 404：
+///   - 新版（约 1.10+）：<mc>-<loader>，例如 "1.10.2-12.18.3.2511" / "1.20.1-47.3.0"
+///   - 旧版（约 1.9 及以前）：<mc>-<loader>-<mc>，例如 "1.7.10-10.13.4.1614-1.7.10"
+///     两位 MC 版本（如 1.9）还可能出现 <mc>-<loader>-<mc>.0，例如 "1.9-12.16.1.1938-1.9.0"
+/// 因此这里同时给出多个候选，避免把 1.7.10 这类旧版 Forge 的 installer 拼成不存在的
+/// "1.7.10-10.13.4.1614"（实际是 "1.7.10-10.13.4.1614-1.7.10"），进而回退到坏占位 JSON。
+/// NeoForge 1.20.1 早期 artifactId 是 net.neoforged:forge，之后是 net.neoforged:neoforge
 /// BMCLAPI 镜像优先（若用户选了 bmclapi 源）
-- (nullable NSString *)buildInstallerURLForLoader:(NSString *)loader
-                                    loaderVersion:(NSString *)loaderVersion
-                                   minecraftVersion:(NSString *)minecraftVersion {
+- (NSArray<NSString *> *)installerURLCandidatesForLoader:(NSString *)loader
+                                           loaderVersion:(NSString *)loaderVersion
+                                      minecraftVersion:(NSString *)minecraftVersion {
     NSString *downloadSource = [PLPreferences currentDownloadSourceForType:@"forge"];
     BOOL useBMCLAPI = [downloadSource isEqualToString:@"bmclapi"];
 
     if ([loader isEqualToString:@"Forge"]) {
-        // Forge versionString = "<mc>-<loaderVersion>"，例如 "1.20.1-47.3.0"
-        NSString *versionString = [NSString stringWithFormat:@"%@-%@", minecraftVersion, loaderVersion];
-        if (useBMCLAPI) {
-            return [NSString stringWithFormat:@"https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/%@/forge-%@-installer.jar", versionString, versionString];
+        NSString *plainVersion = [NSString stringWithFormat:@"%@-%@", minecraftVersion, loaderVersion];
+        NSMutableArray<NSString *> *versionStrings = [NSMutableArray arrayWithObject:plainVersion];
+        if (minecraftVersion.length > 0) {
+            // 旧版 Forge 坐标：<mc>-<forge>-<mc>
+            NSString *legacyVersion = [NSString stringWithFormat:@"%@-%@", plainVersion, minecraftVersion];
+            if (![versionStrings containsObject:legacyVersion]) {
+                [versionStrings addObject:legacyVersion];
+            }
+            // 两位 MC 版本（1.9 → 1.9.0）的旧版坐标变体
+            NSArray<NSString *> *parts = [minecraftVersion componentsSeparatedByString:@"."];
+            if (parts.count == 2) {
+                NSString *normalizedMC = [minecraftVersion stringByAppendingString:@".0"];
+                NSString *legacyNormalized = [NSString stringWithFormat:@"%@-%@", plainVersion, normalizedMC];
+                if (![versionStrings containsObject:legacyNormalized]) {
+                    [versionStrings addObject:legacyNormalized];
+                }
+            }
         }
-        return [NSString stringWithFormat:@"https://maven.minecraftforge.net/net/minecraftforge/forge/%@/forge-%@-installer.jar", versionString, versionString];
+        NSString *base = useBMCLAPI
+            ? @"https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge"
+            : @"https://maven.minecraftforge.net/net/minecraftforge/forge";
+        NSMutableArray<NSString *> *urls = [NSMutableArray array];
+        for (NSString *versionString in versionStrings) {
+            [urls addObject:[NSString stringWithFormat:@"%@/%@/forge-%@-installer.jar", base, versionString, versionString]];
+        }
+        return urls;
     }
 
     if ([loader isEqualToString:@"NeoForge"]) {
-        // NeoForge 1.20.1 早期版本 artifactId 是 net.neoforged:forge，之后是 net.neoforged:neoforge
         // loaderVersion 例如 "47.1.0"（1.20.1）或 "20.6.119-beta"（1.20.6+）
         BOOL isLegacyForgeArtifact = [minecraftVersion isEqualToString:@"1.20.1"];
+        NSString *base = useBMCLAPI
+            ? @"https://bmclapi2.bangbang93.com/maven"
+            : @"https://maven.neoforged.net/releases";
         if (isLegacyForgeArtifact) {
-            if (useBMCLAPI) {
-                return [NSString stringWithFormat:@"https://bmclapi2.bangbang93.com/maven/net/neoforged/forge/%@/forge-%@-installer.jar", loaderVersion, loaderVersion];
-            }
-            return [NSString stringWithFormat:@"https://maven.neoforged.net/releases/net/neoforged/forge/%@/forge-%@-installer.jar", loaderVersion, loaderVersion];
+            return @[[NSString stringWithFormat:@"%@/net/neoforged/forge/%@/forge-%@-installer.jar", base, loaderVersion, loaderVersion]];
         }
-        if (useBMCLAPI) {
-            return [NSString stringWithFormat:@"https://bmclapi2.bangbang93.com/maven/net/neoforged/neoforge/%@/neoforge-%@-installer.jar", loaderVersion, loaderVersion];
-        }
-        return [NSString stringWithFormat:@"https://maven.neoforged.net/releases/net/neoforged/neoforge/%@/neoforge-%@-installer.jar", loaderVersion, loaderVersion];
+        return @[[NSString stringWithFormat:@"%@/net/neoforged/neoforge/%@/neoforge-%@-installer.jar", base, loaderVersion, loaderVersion]];
     }
 
-    return nil;
+    return @[];
 }
 
 /// 根据 MC 版本推断所需 Java 主版本号
