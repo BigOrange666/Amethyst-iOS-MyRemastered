@@ -153,8 +153,8 @@ If you would like to contribute translations for this project, please go to [Cro
 | Azul Zulu JDK | Java runtime (8/17/21/25) | GPL-2.0 | [Website](https://www.azul.com/downloads/?package=jdk) |
 | LWJGL3 | Java game development library | BSD-3 | [GitHub](https://github.com/PojavLauncherTeam/lwjgl3) |
 | LWJGLX | LWJGL2 compatibility layer | -- | [GitHub](https://github.com/PojavLauncherTeam/lwjglx) |
-| DBNumberedSlider | UI slider control | Apache-2.0 | [GitHub](https://github.com/khanhduytran0/DBNumberedSlider) |
-| fishhook | Dynamic library rebinding | BSD-3 | [GitHub](https://github.com/khanhduytran0/fishhook) |
+| DBNumberedSlider | UI slider control | Apache-2.0 | [GitHub](https://github.com/immago/DBNumberedSlider) |
+| fishhook | Dynamic library rebinding | BSD-3 | [GitHub](https://github.com/facebook/fishhook) |
 | shaderc | Vulkan shader compilation | Apache-2.0 | [GitHub](https://github.com/khanhduytran0/shaderc) |
 | NRFileManager | File management utilities | MPL-2.0 | [GitHub](https://github.com/mozilla-mobile/firefox-ios) |
 | AltKit | AltStore integration | -- | [GitHub](https://github.com/rileytestut/AltKit) |

@@ -147,8 +147,8 @@ JIT（即时编译）是流畅运行游戏的关键。请根据自身环境选�
 | Azul Zulu JDK | Java 运行时（8/17/21/25） | GPL-2.0 | [官网](https://www.azul.com/downloads/?package=jdk) |
 | LWJGL3 | Java 游戏开发库 | BSD-3 | [GitHub](https://github.com/PojavLauncherTeam/lwjgl3) |
 | LWJGLX | LWJGL2 兼容层 | -- | [GitHub](https://github.com/PojavLauncherTeam/lwjglx) |
-| DBNumberedSlider | UI 滑块控件 | Apache-2.0 | [GitHub](https://github.com/khanhduytran0/DBNumberedSlider) |
-| fishhook | 动态库重绑定 | BSD-3 | [GitHub](https://github.com/khanhduytran0/fishhook) |
+| DBNumberedSlider | UI 滑块控件 | Apache-2.0 | [GitHub](https://github.com/immago/DBNumberedSlider) |
+| fishhook | 动态库重绑定 | BSD-3 | [GitHub](https://github.com/facebook/fishhook) |
 | shaderc | Vulkan 着色器编译 | Apache-2.0 | [GitHub](https://github.com/khanhduytran0/shaderc) |
 | NRFileManager | 文件管理工具 | MPL-2.0 | [GitHub](https://github.com/mozilla-mobile/firefox-ios) |
 | AltKit | AltStore 集成 | -- | [GitHub](https://github.com/rileytestut/AltKit) |
