@@ -17,6 +17,7 @@ void dlsym_OSMesa() {
     handle.OSMesaMakeCurrent = dlsym(dl_handle,"OSMesaMakeCurrent");
     handle.OSMesaGetCurrentContext = dlsym(dl_handle,"OSMesaGetCurrentContext");
     handle.OSMesaCreateContext = dlsym(dl_handle, "OSMesaCreateContext");
+    handle.OSMesaCreateContextAttribs = dlsym(dl_handle, "OSMesaCreateContextAttribs");
     handle.OSMesaDestroyContext = dlsym(dl_handle, "OSMesaDestroyContext");
     handle.OSMesaPixelStore = dlsym(dl_handle,"OSMesaPixelStore");
     handle.glGetString = dlsym(dl_handle,"glGetString");
@@ -32,8 +33,42 @@ bool osm_init() {
 
 osm_render_window_t* osm_init_context(osm_render_window_t* share) {
     osm_render_window_t* render_window = calloc(1, sizeof(osm_render_window_t));
-    OSMesaContext context = handle.OSMesaCreateContext(GL_RGBA, share ? share->context : NULL);
-    if(!context) {
+    OSMesaContext context = NULL;
+
+    // 优先请求 core profile 上下文：Angelica/Celeritas 等新式渲染器要求 core
+    // profile（日志 "Non-core GL context (profile mask 0x2); FFP emulation requires
+    // a core profile"），而经典 OSMesaCreateContext 只会创建 compatibility profile。
+    // Mesa >= 11.2（本构成为 Mesa 25.0.7）支持 OSMesaCreateContextAttribs 的
+    // OSMESA_PROFILE=OSMESA_CORE_PROFILE + OSMESA_CONTEXT_MAJOR/MINOR_VERSION。
+    // 请求 GL 3.3 core（Angelica 的最低要求；zink 实际会回 4.x core），
+    // 若该入口或 core 上下文创建失败则回落到经典 compat API。
+    // 逃生开关：AMETHYST_ZINK_COMPAT_PROFILE=1 强制保留 compatibility profile
+    // （给显式依赖固定管线 glBegin/glMatrixMode 的老旧整合包用），无需重新构建。
+    const char *forceCompat = getenv("AMETHYST_ZINK_COMPAT_PROFILE");
+    const BOOL wantCore = handle.OSMesaCreateContextAttribs != NULL &&
+                          !(forceCompat && forceCompat[0] == '1');
+    if (wantCore) {
+        const int coreAttribs[] = {
+            OSMESA_FORMAT, OSMESA_RGBA,
+            OSMESA_PROFILE, OSMESA_CORE_PROFILE,
+            OSMESA_CONTEXT_MAJOR_VERSION, 3,
+            OSMESA_CONTEXT_MINOR_VERSION, 3,
+            0
+        };
+        context = handle.OSMesaCreateContextAttribs(coreAttribs,
+                                                    share ? share->context : NULL);
+        if (!context) {
+            NSLog(@"OSMBridge: core profile context creation failed, falling back to compatibility profile");
+        }
+    } else if (forceCompat && forceCompat[0] == '1') {
+        NSLog(@"OSMBridge: AMETHYST_ZINK_COMPAT_PROFILE=1, using compatibility profile");
+    } else {
+        NSLog(@"OSMBridge: OSMesaCreateContextAttribs unavailable, using legacy compatibility profile");
+    }
+    if (!context) {
+        context = handle.OSMesaCreateContext(GL_RGBA, share ? share->context : NULL);
+    }
+    if (!context) {
         NSLog(@"OSMBridge: FAILED to create context");
         free(render_window);
         return NULL;

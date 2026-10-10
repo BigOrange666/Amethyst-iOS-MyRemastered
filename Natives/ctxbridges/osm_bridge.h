@@ -7,7 +7,8 @@
 typedef struct {
     GLboolean (*OSMesaMakeCurrent) (OSMesaContext ctx, void *buffer, GLenum type, GLsizei width, GLsizei height);
     OSMesaContext (*OSMesaGetCurrentContext) (void);
-OSMesaContext  (*OSMesaCreateContext) (GLenum format, OSMesaContext sharelist);
+OSMesaContext (*OSMesaCreateContext) (GLenum format, OSMesaContext sharelist);
+    OSMesaContext (*OSMesaCreateContextAttribs) (const int *attribList, OSMesaContext sharelist);
     void (*OSMesaDestroyContext) (OSMesaContext ctx);
     void (*OSMesaPixelStore) ( GLint pname, GLint value );
     GLubyte* (*glGetString) (GLenum name);
