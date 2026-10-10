@@ -2,6 +2,7 @@
 #import "SurfaceViewController.h"
 
 #include <dlfcn.h>
+#include <pthread.h>
 #include "environ.h"
 #include "utils.h"
 
@@ -77,34 +78,50 @@ osm_render_window_t* osm_init_context(osm_render_window_t* share) {
     return render_window;
 }
 
+// 记录最后一次 OSMesaMakeCurrent 所在线程。仅当“同线程”才可按尺寸跳过重绑；
+// 仅凭尺寸匹配提前返回会把线程留在“无 current context”状态——GLFW shim 路径
+// 二次 pojavCreateContext 舞蹈（make-current → window=0 解绑 → 重绑同 bundle）
+// 后，Client 线程 glCreateShader 返回 0、info log 为空、GL_COMPILE_STATUS=GL_FALSE，
+// 即 fontFilter 崩溃（latestlog3 1069/1624/1660）。
+static pthread_t s_osm_bind_thread = (pthread_t)0;
+
 void osm_apply_current_ll() {
-    if (currentBundle->osm.width == windowWidth && currentBundle->osm.height == windowHeight) {
+    if (pthread_equal(s_osm_bind_thread, pthread_self()) &&
+        currentBundle->osm.width == windowWidth && currentBundle->osm.height == windowHeight) {
         return;
     }
 
-    currentBundle->osm.width = windowWidth;
-    currentBundle->osm.height = windowHeight;
-    currentBundle->osm.buffer = reallocf(currentBundle->osm.buffer, windowWidth * windowHeight * 4);
+    if (currentBundle->osm.width != windowWidth || currentBundle->osm.height != windowHeight) {
+        currentBundle->osm.width = windowWidth;
+        currentBundle->osm.height = windowHeight;
+        currentBundle->osm.buffer = reallocf(currentBundle->osm.buffer, windowWidth * windowHeight * 4);
+    }
 
     handle.OSMesaMakeCurrent(currentBundle->osm.context, currentBundle->osm.buffer, GL_UNSIGNED_BYTE, currentBundle->osm.width, currentBundle->osm.height);
     handle.OSMesaPixelStore(OSMESA_ROW_LENGTH, currentBundle->osm.width);
     handle.OSMesaPixelStore(OSMESA_Y_UP, 0);
+    s_osm_bind_thread = pthread_self();
 }
 
 void osm_make_current(osm_render_window_t* bundle) {
     if(!bundle) {
-        free(currentBundle->osm.buffer);
-        CGColorSpaceRelease(currentBundle->osm.color_space);
-        currentBundle->osm.buffer = NULL;
-        currentBundle->osm.color_space = NULL;
-        currentBundle->osm.width = currentBundle->osm.height = 0;
-        currentBundle = NULL;
-        //technically this does nothing as its not possible to unbind a context in OSMesa
+        if (currentBundle) {
+            free(currentBundle->osm.buffer);
+            CGColorSpaceRelease(currentBundle->osm.color_space);
+            currentBundle->osm.buffer = NULL;
+            currentBundle->osm.color_space = NULL;
+            currentBundle->osm.width = currentBundle->osm.height = 0;
+            currentBundle = NULL;
+        }
+        // 解绑当前线程（OSMesaMakeCurrent(NULL) 会清掉本线程 current context），
+        // 并清除线程标记，强制下一次 osm_apply_current_ll 真正执行重绑。
+        s_osm_bind_thread = (pthread_t)0;
         handle.OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
         return;
     }
 
     currentBundle = (basic_render_window_t *)bundle;
+    if (currentBundle->osm.color_space) CGColorSpaceRelease(currentBundle->osm.color_space);
     currentBundle->osm.color_space = CGColorSpaceCreateDeviceRGB();
     osm_apply_current_ll();
 }
