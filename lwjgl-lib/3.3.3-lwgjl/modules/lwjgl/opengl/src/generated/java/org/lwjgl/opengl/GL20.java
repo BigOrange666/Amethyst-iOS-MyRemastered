@@ -51,19 +51,29 @@ public class GL20 extends GL15 {
 
     public static String glGetActiveAttrib(int program, int index, int maxLength,
                                            IntBuffer sizeType) {
-        //TODO check if correct
+        // 兼容包装：把 [size, type] 合并写进 sizeType 的 pos 与 pos+1 两个槽位，
+        // 且不改变 buffer 的 position —— 调用方（如 Angelica ProgramUniforms）复用
+        // 同一个 sizeType 缓冲遍历所有 uniform，position 被推进后 remaining 会逐渐
+        // 归零，导致第 3 个 uniform 起 GL20C.check(size,1) 抛
+        // "Number of remaining elements is 0"。
+        int pos = sizeType.position();
         IntBuffer type = BufferUtils.createIntBuffer(1);
         String s = GL20.glGetActiveAttrib(program, index, maxLength, sizeType, type);
-        sizeType.put(type.get(0));
+        sizeType.put(pos + 1, type.get(0));
+        sizeType.position(pos);
         return s;
     }
 
     public static String glGetActiveUniform(int program, int index, int maxLength,
                                             IntBuffer sizeType) {
-        //TODO if correct
+        // 兼容包装：把 [size, type] 合并写进 sizeType 的 pos 与 pos+1 两个槽位，
+        // 且不改变 buffer 的 position，保证 sizeType 可被同一次 ProgramBuilder.build 中
+        // 的多个 uniform 复用（相对 put 会覆盖 size 槽并递增 position）。
+        int pos = sizeType.position();
         IntBuffer type = BufferUtils.createIntBuffer(1);
         String s = GL20.glGetActiveUniform(program, index, maxLength, sizeType, type);
-        sizeType.put(type.get(0));
+        sizeType.put(pos + 1, type.get(0));
+        sizeType.position(pos);
         return s;
     }
 
