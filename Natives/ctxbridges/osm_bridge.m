@@ -32,7 +32,24 @@ bool osm_init() {
     return true; // no more specific initialization required
 }
 
+// OSMesa/zink 单屏约束：整个进程只有一个可用的底层 screen（zink 基于一个
+// MoltenVK screen 实现），但 GLFW shim 路径（MC 26.x 隐藏工具窗，Task193 形态）
+// 会再调一次 pojavCreateContext。无条件再建 OSMesaContext（第二次 br_init_context）
+// 会与主 context 争抢同一个 zink screen —— 新建 context 一 current，主线程既有的
+// LWJGL 状态（GL caps、函数指针）即失效：下一次 glCreateShader 返回 0、info log 为空、
+// GL_COMPILE_STATUS=GL_FALSE，即 Angelica fontFilter 崩溃（latestlog3/4 11530）。
+// 复用它进程内首个 bundle（与 SDL 路径 ame_SDL_GL_CreateContext 复用 g_glContext、
+// Task193 层→表面单例同一思路：单游戏视图单渲染器，第二个请求只是能力查询）。
+static osm_render_window_t* s_osm_primary = NULL;
+
 osm_render_window_t* osm_init_context(osm_render_window_t* share) {
+    // 二次请求直接复用首个 bundle，绝不再建第二个 zink/OSMesa 上下文。
+    if (s_osm_primary != NULL) {
+        NSLog(@"[OSMBridge] reuse primary bundle=%p for second context request (share=%p), "
+              @"single OSMesa/zink screen", s_osm_primary, share);
+        return s_osm_primary;
+    }
+
     osm_render_window_t* render_window = calloc(1, sizeof(osm_render_window_t));
     OSMesaContext context = NULL;
 
@@ -75,6 +92,9 @@ osm_render_window_t* osm_init_context(osm_render_window_t* share) {
         return NULL;
     }
     render_window->context = context;
+    if (s_osm_primary == NULL) {
+        s_osm_primary = render_window;
+    }
     return render_window;
 }
 
@@ -105,24 +125,19 @@ void osm_apply_current_ll() {
 
 void osm_make_current(osm_render_window_t* bundle) {
     if(!bundle) {
-        if (currentBundle) {
-            free(currentBundle->osm.buffer);
-            CGColorSpaceRelease(currentBundle->osm.color_space);
-            currentBundle->osm.buffer = NULL;
-            currentBundle->osm.color_space = NULL;
-            currentBundle->osm.width = currentBundle->osm.height = 0;
-            currentBundle = NULL;
-        }
-        // 解绑当前线程（OSMesaMakeCurrent(NULL) 会清掉本线程 current context），
-        // 并清除线程标记，强制下一次 osm_apply_current_ll 真正执行重绑。
+        // 仅解绑本线程并清除线程标记，强制下一次 osm_apply_current_ll 真正重绑。
+        // 绝不释放 bundle 的 buffer/color_space：bundle 可能已被其他线程（Client）
+        // 共享（s_osm_primary 复用），此时 free 会造成 use-after-free。
+        currentBundle = NULL;
         s_osm_bind_thread = (pthread_t)0;
         handle.OSMesaMakeCurrent(NULL, NULL, 0, 0, 0);
         return;
     }
 
     currentBundle = (basic_render_window_t *)bundle;
-    if (currentBundle->osm.color_space) CGColorSpaceRelease(currentBundle->osm.color_space);
-    currentBundle->osm.color_space = CGColorSpaceCreateDeviceRGB();
+    if (!currentBundle->osm.color_space) {
+        currentBundle->osm.color_space = CGColorSpaceCreateDeviceRGB();
+    }
     osm_apply_current_ll();
 }
 
