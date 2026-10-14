@@ -11,7 +11,7 @@
 //  3. 下载 manifest/files 列出的所有 mod 到 gameDir/mods
 //  4. 对 Fabric/Quilt 整合包自动拉取 loader profile json 写入版本目录
 //  5. 对 Forge/NeoForge 整合包下载 installer.jar 并调用直装器写入 modpack gameDir
-//  6. gameDir 使用相对路径 (./custom_gamedir/<id>) 与启动器 POJAV_GAME_DIR 对齐
+//  6. gameDir 使用相对路径 (./versions/<versionId>) 与启动器 POJAV_GAME_DIR 对齐（对齐 HMCL 版本隔离）
 //  7. 写完整 profile (含 gameDir、lastVersionId、icon)
 //
 
@@ -39,8 +39,6 @@
 static NSString * const kImportedModpacksKey = @"ImportedModpacks";
 
 @interface ModpackImportService ()
-/// 整合包工作区根目录: <POJAV_GAME_DIR>/custom_gamedir
-@property (nonatomic, strong) NSString *customGameDir;
 /// 阶段5修复（参照 FCL DownloadList）：跟踪本次导入过程中下载失败的文件，便于上层向用户报告
 @property (nonatomic, strong) NSMutableArray<NSDictionary *> *failedFilesInternal;
 /// Phase 3（Task 3.2）：跟踪本次导入过程中因 404/资源不存在被跳过的文件（警告，非失败）
@@ -75,14 +73,8 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
 - (instancetype)init {
     self = [super init];
     if (self) {
-        // 整合包目录直接用 POJAV_GAME_DIR 下的 custom_gamedir，gameDir 字段写相对路径
-        // 这样启动器读取 profile 时会拼成 <POJAV_GAME_DIR>/custom_gamedir/<id>
-        const char *gameDirEnv = getenv("POJAV_GAME_DIR");
-        self.customGameDir = [@(gameDirEnv ?: ".") stringByAppendingPathComponent:@"custom_gamedir"];
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if (![fm fileExistsAtPath:self.customGameDir]) {
-            [fm createDirectoryAtPath:self.customGameDir withIntermediateDirectories:YES attributes:nil error:nil];
-        }
+        // 整合包实例目录对齐 HMCL 版本隔离：<POJAV_GAME_DIR>/versions/<versionId>
+        // gameDir 字段写相对路径 ./versions/<versionId>，启动器读取 profile 时自行拼接。
 
         // Phase 3：文件下载统一交给 PLDownloadClient（镜像重试/SHA1 校验/断点续传由其内部处理），
         // 不再自建 NSURLSession + delegate + 信号量字典的同步下载机制。
@@ -203,14 +195,17 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     return [formatter stringFromDate:date];
 }
 
-/// 给定 modpack id，返回 gameDir 的绝对路径 (用于本地文件操作)
-- (NSString *)absoluteGameDirForModpackId:(NSString *)modpackId {
-    return [self.customGameDir stringByAppendingPathComponent:modpackId];
+/// 给定 versionId，返回实例目录的绝对路径 (用于本地文件操作)。
+/// 对齐 HMCL 版本隔离：整合包实例目录就是主 versions 目录下的版本隔离目录。
+- (NSString *)absoluteGameDirForVersionId:(NSString *)versionId {
+    const char *gameDirEnv = getenv("POJAV_GAME_DIR");
+    NSString *mainDir = @(gameDirEnv ?: ".");
+    return [[mainDir stringByAppendingPathComponent:@"versions"] stringByAppendingPathComponent:versionId];
 }
 
-/// 给定 modpack id，返回 gameDir 的相对路径 (写入 profile 的 gameDir 字段)
-- (NSString *)relativeGameDirForModpackId:(NSString *)modpackId {
-    return [NSString stringWithFormat:@"./custom_gamedir/%@", modpackId];
+/// 给定 versionId，返回实例目录的相对路径 (写入 profile 的 gameDir 字段)
+- (NSString *)relativeGameDirForVersionId:(NSString *)versionId {
+    return [NSString stringWithFormat:@"./versions/%@", versionId];
 }
 
 /// 把 Modrinth dependencies 解析成 loader 信息
@@ -1077,8 +1072,11 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
 
     if (progress) progress(0.05, localize(@"i18n_str_1290", nil));
 
-    NSString *gameDirAbsolute = [self absoluteGameDirForModpackId:modpackId];
-    NSString *gameDirRelative = [self relativeGameDirForModpackId:modpackId];
+    // 整合包实例目录（对齐 HMCL 版本隔离）：<POJAV_GAME_DIR>/versions/<versionId>。
+    // 版本 JSON、mods/saves/config 同处一个版本目录，不再使用 custom_gamedir。
+    NSString *versionId = [self versionIdForModpack:modpackInfo];
+    NSString *gameDirAbsolute = [self absoluteGameDirForVersionId:versionId];
+    NSString *gameDirRelative = [self relativeGameDirForVersionId:versionId];
 
     // 清理可能存在的旧目录
     if ([fm fileExistsAtPath:gameDirAbsolute]) {
@@ -1097,10 +1095,6 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     // 创建 mods 目录
     NSString *modsDir = [gameDirAbsolute stringByAppendingPathComponent:@"mods"];
     [fm createDirectoryAtPath:modsDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-    // 创建 versions 目录
-    NSString *versionsDir = [gameDirAbsolute stringByAppendingPathComponent:@"versions"];
-    [fm createDirectoryAtPath:versionsDir withIntermediateDirectories:YES attributes:nil error:nil];
 
     // 取消检查点
     if ([self checkCancelledWithError:error]) {
@@ -1172,7 +1166,7 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     NSString *loader = modpackInfo[@"loader"];
     NSString *loaderVersion = modpackInfo[@"loaderVersion"];
     NSString *minecraftVersion = modpackInfo[@"minecraftVersion"];
-    NSString *versionId = [self versionIdForModpack:modpackInfo];
+    // versionId 已在流程前段计算（用作实例目录），此处不再重复求值。
 
     NSError *loaderError = nil;
     BOOL loaderSuccess = [self installModLoader:loader
@@ -2287,10 +2281,10 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     }
 
     NSString *downloadSource = getPrefObject(@"general.download_source") ?: @"official";
-    // 版本 JSON 必须写入 POJAV_GAME_DIR/versions/（主目录），而非 gameDirAbsolute（整合包隔离目录）。
+    // 版本 JSON 写入 POJAV_GAME_DIR/versions/<versionId>（= 整合包实例目录 gameDirAbsolute）。
     // Minecraft 启动器 Java 端 Tools.java 的 DIR_HOME_VERSION 固定指向 POJAV_GAME_DIR/versions，
-    // 不从 profile gameDir 读取。之前写入 gameDirAbsolute/versions/ 会导致启动时"找不到版本信息"。
-    // gameDirAbsolute 仅用于 mods/saves/configs 等用户数据隔离（通过 profile gameDir=user.dir 实现）。
+    // 不从 profile gameDir 读取。版本隔离下实例目录与版本目录本就同处 versions/<versionId>，
+    // 因此 mods/saves/config 与版本 JSON 天然共存（对齐 HMCL）。
     NSString *mainVersionDir = [NSString stringWithFormat:@"%s/versions/%@", getenv("POJAV_GAME_DIR"), versionId];
     NSString *versionDir = mainVersionDir;
     NSString *versionJsonPath = [versionDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.json", versionId]];
@@ -2712,8 +2706,8 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
         @"name": profileName,
         @"lastVersionId": versionId ?: @"",
         @"gameDir": gameDirRelative,
-        // 整合包强制隔离（HMCL：modpack 实例不可取消隔离）
-        @"isolation": AMEIsolationCustom,
+        // 整合包强制版本隔离（HMCL：modpack 实例不可取消隔离，实例目录即 versions/<versionId>）
+        @"isolation": AMEIsolationVersion,
         @"created": [self iso8601StringFromDate:[NSDate date]],
         @"type": @"modpack"
     } mutableCopy];

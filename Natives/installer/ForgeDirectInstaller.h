@@ -29,7 +29,7 @@ typedef NS_ENUM(NSInteger, ForgeDirectInstallerErrorCode) {
                           progress:(void (^)(double progress, NSString *stageMessage))progress
                             error:(NSError **)error;
 
-// 整合包导入专用：支持自定义 gameDir（写入到 modpack 的 custom_gamedir 子目录）
+// 整合包导入专用：支持自定义 gameDir（写入到整合包的实例目录 versions/<versionId>）
 // customGameDir 为 nil 时使用默认 POJAV_GAME_DIR；skipRegisterVersion=YES 时不写 profile（由调用方自行注册）
 + (BOOL)installForgeFromInstaller:(NSString *)installerPath
                         versionId:(NSString *)versionId

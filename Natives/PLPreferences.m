@@ -201,8 +201,8 @@ NSString *const PREF_MOD_MIRROR = @"general.mod_mirror";
             @"ui_layout": @"vs",
             @"ui_theme": @"dark",
             // 版本隔离默认策略（新建实例时求值一次）：
-            // shared = 从不隔离 / modded = 仅带 loader 的新版本隔离（默认，等价 HMCL MODDED）/ version = 所有新版本隔离
-            @"default_isolation": @"modded",
+            // never = 从不隔离 / modded = 仅带 loader 的新版本隔离 / always = 所有新实例隔离（默认，对齐 HMCL ALWAYS）
+            @"default_isolation": @"always",
             @"multi_threaded": @NO,
             // 自定义外观颜色（hex 字符串，空串=使用默认深色毛玻璃/白色文字）
             @"text_color": @"",

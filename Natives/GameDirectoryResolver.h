@@ -11,7 +11,7 @@
 //    - DefaultIsolationType / overrideProperties → AMEDirIsolation + general.default_isolation
 //
 //  规则（与 HMCLGameRepository.computeRunDirectory 一一对应）：
-//    ① 整合包 profile  → 强制隔离到自己的实例根（本仓为 custom_gamedir/<id>）
+//    ① 整合包 profile  → 强制隔离到自己的实例根（本仓为 versions/<版本ID>）
 //    ② 隔离(version)   → <main>/versions/<版本ID>
 //    ③ 自定义(custom)  → profile.gameDir（绝对路径原样，相对路径相对主目录）
 //    ④ 不隔离(shared)  → <main> 主目录
@@ -76,7 +76,7 @@ extern NSString *const AMEIsolationCustom;
 /// 是否处于隔离状态（整合包 profile 恒为 YES）
 + (BOOL)profileIsIsolated:(NSDictionary *)profile;
 
-/// 是否是整合包 profile（type == "modpack"，或 gameDir 位于 custom_gamedir 下）
+/// 是否是整合包 profile（type == "modpack"，或 gameDir 位于历史遗留的 custom_gamedir 下）
 + (BOOL)isModpackProfile:(NSDictionary *)profile;
 
 /// 写入 isolation key 并同步 gameDir 字段（gameDir 仍是老代码与 Java 端的兜底）

@@ -145,7 +145,7 @@ NSString *const AMEIsolationCustom = @"custom";
             if (![raw isKindOfClass:[NSString class]] || [(NSString *)raw length] == 0 ||
                 [(NSString *)raw isEqualToString:@"."]) {
                 NSString *versionId = [self effectiveVersionIdForProfile:profile];
-                if (versionId.length == 0) return @"./custom_gamedir";
+                if (versionId.length == 0) return @".";
                 return [NSString stringWithFormat:@"./versions/%@", versionId];
             }
             return (NSString *)raw;
@@ -171,7 +171,7 @@ NSString *const AMEIsolationCustom = @"custom";
 + (void)applyDefaultIsolationToProfile:(NSMutableDictionary *)profile modded:(BOOL)modded {
     NSString *policy = getPrefObject(@"general.default_isolation");
     if (![policy isKindOfClass:[NSString class]] || policy.length == 0) {
-        policy = @"modded";
+        policy = @"always";
     }
     AMEDirIsolation isolation;
     if ([policy isEqualToString:@"always"]) {
@@ -290,8 +290,9 @@ NSString *const AMEIsolationCustom = @"custom";
     return @"";
 }
 
-/// 整合包判定：与 ModpackImportService 写入的 profile.type == "modpack" 对齐，
-/// 另外兜底识别 gameDir 位于 custom_gamedir 下（历史数据可能缺 type）。
+/// 整合包判定：与 ModpackImportService 写入的 profile.type == "modpack" 对齐。
+/// 新版整合包实例目录已统一到 versions/<versionId>（对齐 HMCL 版本隔离）；这里额外
+/// 兜底识别 gameDir 位于历史遗留的 custom_gamedir 下（旧版本导入的数据可能缺 type）。
 + (BOOL)isModpackProfile:(NSDictionary *)profile {
     id type = profile[@"type"];
     if ([type isKindOfClass:[NSString class]] && [type isEqualToString:@"modpack"]) {
