@@ -32,6 +32,7 @@
 #import "GameDirectoryResolver.h"
 #import "LauncherPreferences.h"
 #import "ModService.h"
+#import "ModpackExportService.h"
 #import "ShaderService.h"
 #import "ResourcePackService.h"
 #import "DataPackService.h"
@@ -1318,6 +1319,9 @@ static BOOL aiIsLatestAlias(NSString *s) {
         if ([prof isKindOfClass:[NSDictionary class]]) {
             NSString *lastVersionId = [prof[@"lastVersionId"] isKindOfClass:[NSString class]] ? prof[@"lastVersionId"] : @"";
             if (lastVersionId.length > 0) {
+                // 统一用 parseVersionId：兼容 loader 形态 id 与名称型（整合包按名命名）id
+                NSString *mc = [ModpackExportService parseVersionId:lastVersionId][@"minecraft"];
+                if (mc.length > 0) return mc;
                 return [self normalizeGameVersion:lastVersionId];
             }
         }

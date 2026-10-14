@@ -10,6 +10,7 @@
 #import "ModsManagerViewController.h"
 #import "ModTableViewCell.h"
 #import "ModService.h"
+#import "ModpackExportService.h"
 #import "ModItem.h"
 #import "ModUpdateService.h"
 #import "ModVersion.h"
@@ -889,22 +890,11 @@ static NSString *ModsManagerSHA1ForFile(NSString *path) {
         [self showDialogWithTitle:localize(@"resman.common.notice", nil) message:localize(@"resman.mods.no_version_info", nil)];
         return;
     }
-    NSString *gameVersion = nil;
-    NSString *loader = nil;
-    NSArray<NSString *> *loaders = @[@"forge", @"fabric", @"neoforge", @"quilt"];
-    for (NSString *name in loaders) {
-        NSRange range = [lastVersionId rangeOfString:[NSString stringWithFormat:@"-%@-", name]];
-        if (range.location != NSNotFound) {
-            gameVersion = [lastVersionId substringToIndex:range.location];
-            loader = name;
-            break;
-        }
-    }
-    if (!gameVersion) {
-        // 纯 <mc> 格式，无 loader
-        gameVersion = lastVersionId;
-        loader = nil;
-    }
+    // 统一用 parseVersionId：兼容 loader 形态 id 与「整合包按名命名」的名称型 id
+    //（名称型 id 不含 MC/loader 信息，parseVersionId 会读取实例 sidecar / version.json 反解）。
+    NSDictionary *versionInfo = [ModpackExportService parseVersionId:lastVersionId];
+    NSString *gameVersion = versionInfo[@"minecraft"];
+    NSString *loader = versionInfo[@"loader"];  // 小写：fabric/forge/neoforge/quilt
 
     // 若处于选择模式先退出（后续数据可能变化）
     if (self.selectModeEnabled) {

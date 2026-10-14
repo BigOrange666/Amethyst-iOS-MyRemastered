@@ -1376,9 +1376,8 @@ static NSString * localizeProfileTitle(NSString *title) {
 - (BOOL)isFabricProfile {
     NSString *lastVersionId = self.profile[@"lastVersionId"];
     if (![lastVersionId isKindOfClass:[NSString class]] || lastVersionId.length == 0) return NO;
-    // Fabric profile id 形如 "fabric-loader-0.16.0-1.21"，含 "fabric"
-    // Quilt profile id 含 "quilt"
-    return [lastVersionId.lowercaseString containsString:@"fabric"];
+    // 统一用 parseVersionId：兼容 loader 形态 id 与名称型（整合包按名命名）id
+    return [[ModpackExportService parseVersionId:lastVersionId][@"loader"] isEqualToString:@"fabric"];
 }
 
 - (BOOL)isOptiFineCompatibleProfile {
@@ -1386,24 +1385,20 @@ static NSString * localizeProfileTitle(NSString *title) {
 }
 
 /// 是否为原版 (Vanilla) profile
-/// lastVersionId 不含 forge/fabric/quilt/neoforge 等加载器标识
+/// loader 为空即原版（parseVersionId 统一判定，兼容名称型 id）
 - (BOOL)isVanillaProfile {
     NSString *lastVersionId = self.profile[@"lastVersionId"];
     if (![lastVersionId isKindOfClass:[NSString class]] || lastVersionId.length == 0) return NO;
-    NSString *lower = lastVersionId.lowercaseString;
-    return ![lower containsString:@"forge"]
-        && ![lower containsString:@"fabric"]
-        && ![lower containsString:@"quilt"];
+    NSString *loader = [ModpackExportService parseVersionId:lastVersionId][@"loader"];
+    return loader.length == 0;
 }
 
 /// 是否为 Forge profile（排除 NeoForge）
-/// 关键修复：原先用 `containsString:@"forge"` 会误判 neoforge 为 forge，
-/// 现显式排除 neoforge（参照 FCL/HMCL 的 OptiFine 兼容性判断）
+/// parseVersionId 已区分 forge/neoforge，不再靠字符串 contains 猜测
 - (BOOL)isForgeProfile {
     NSString *lastVersionId = self.profile[@"lastVersionId"];
     if (![lastVersionId isKindOfClass:[NSString class]] || lastVersionId.length == 0) return NO;
-    NSString *lower = lastVersionId.lowercaseString;
-    return [lower containsString:@"forge"] && ![lower containsString:@"neoforge"];
+    return [[ModpackExportService parseVersionId:lastVersionId][@"loader"] isEqualToString:@"forge"];
 }
 
 /// 当前 profile 的 mods 目录路径（版本隔离统一决策点 GameDirectoryResolver）
@@ -1413,36 +1408,12 @@ static NSString * localizeProfileTitle(NSString *title) {
     return modsDir;
 }
 
-/// 当前 profile 的游戏版本（从 lastVersionId 解析）
+/// 当前 profile 的游戏版本（parseVersionId 统一解析，兼容名称型 id）
 - (NSString *)currentGameVersion {
     NSString *lastVersionId = self.profile[@"lastVersionId"];
     if (![lastVersionId isKindOfClass:[NSString class]] || lastVersionId.length == 0) return nil;
-    // 解析 loader 前的游戏版本：1.21.1-forge-47.3.0 → 1.21.1
-    // fabric-loader-0.16.0-1.21 → 1.21
-    NSArray<NSString *> *loaders = @[@"forge", @"fabric", @"neoforge", @"quilt", @"fabric-loader"];
-    NSString *result = lastVersionId;
-    for (NSString *loader in loaders) {
-        NSString *delimiter = [NSString stringWithFormat:@"-%@-", loader];
-        NSRange range = [result rangeOfString:delimiter options:NSCaseInsensitiveSearch];
-        if (range.location != NSNotFound) {
-            result = [result substringToIndex:range.location];
-            break;
-        }
-        // 处理 "fabric-loader-0.16.0-1.21" 形式：取最后一个版本号
-        if ([result.lowercaseString hasPrefix:[NSString stringWithFormat:@"%@-", loader]]) {
-            // fabric-loader-0.16.0-1.21 → 取最后的 "1.21"
-            NSArray *parts = [result componentsSeparatedByString:@"-"];
-            if (parts.count >= 2) {
-                // 找到形如 1.x.x 的部分
-                for (NSString *part in [parts reverseObjectEnumerator]) {
-                    if ([part hasPrefix:@"1."]) {
-                        return part;
-                    }
-                }
-            }
-        }
-    }
-    return result;
+    NSString *mc = [ModpackExportService parseVersionId:lastVersionId][@"minecraft"];
+    return mc.length > 0 ? mc : lastVersionId;
 }
 
 - (void)installFabricAPIStandalone {

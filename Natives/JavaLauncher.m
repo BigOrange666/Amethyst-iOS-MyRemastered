@@ -742,6 +742,43 @@ static void ame97_alignProcessCwdToGameDir(NSString *gameDir) {
 }
 
 // ============================================================================
+// 解析实例的真实 MC 版本号。
+// 整合包实例目录按「整合包名」命名（例如 versions/GTNH），versionId 字符串里**不含**
+// MC 版本信息，无法用正则从 id 提取。这里从实例目录读取：
+//   1) 导入时写的 sidecar `versions/<id>/.amethyst-modpack.json` 的 minecraftVersion；
+//   2) 否则 version.json 的 inheritsFrom（老格式 Forge 可能没有）；
+//   3) 都拿不到则返回原 id（退化为旧行为）。
+// 供 LWJGL 选版 / SFPEW 判定 / metallum 代理 / 渲染器选版解析 MC 版本。
+// ============================================================================
+static NSString *ameResolveMcVersionForVersionId(NSString *versionId) {
+    if (![versionId isKindOfClass:[NSString class]] || versionId.length == 0) {
+        return versionId;
+    }
+    const char *root = getenv("POJAV_GAME_DIR");
+    if (root) {
+        NSString *sidecarPath = [NSString stringWithFormat:@"%s/versions/%@/.amethyst-modpack.json", root, versionId];
+        NSData *sidecarData = [NSData dataWithContentsOfFile:sidecarPath];
+        if (sidecarData.length > 0) {
+            NSDictionary *m = [NSJSONSerialization JSONObjectWithData:sidecarData options:0 error:nil];
+            NSString *mc = [m isKindOfClass:[NSDictionary class]] ? m[@"minecraftVersion"] : nil;
+            if ([mc isKindOfClass:[NSString class]] && mc.length > 0 && ![mc isEqualToString:@"unknown"]) {
+                return mc;
+            }
+        }
+        NSString *jsonPath = [NSString stringWithFormat:@"%s/versions/%@/%@.json", root, versionId, versionId];
+        NSData *data = [NSData dataWithContentsOfFile:jsonPath];
+        if (data.length > 0) {
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            NSString *inh = [json isKindOfClass:[NSDictionary class]] ? json[@"inheritsFrom"] : nil;
+            if ([inh isKindOfClass:[NSString class]] && inh.length > 0) {
+                return inh;
+            }
+        }
+    }
+    return versionId;
+}
+
+// ============================================================================
 // Task98：从任意形态的 version id 里读出 MC 主版本号
 //
 // 旧解析按 "." 切分取 parts[0]，对 Fabric/NeoForge/Forge 前缀形态的 ID 完全
@@ -761,20 +798,22 @@ NSInteger ame98_mcMajorFromVersionId(NSString *versionId) {
     if (![versionId isKindOfClass:[NSString class]] || versionId.length == 0) {
         return 0;
     }
+    // 名称型 versionId（整合包按名命名）无法从字符串提取，先解析出真实 MC 版本
+    NSString *mcVersionId = ameResolveMcVersionForVersionId(versionId);
     NSRegularExpression *legacyRegex = [NSRegularExpression
         regularExpressionWithPattern:@"(?:^|[-_])1\\.\\d" options:0 error:nil];
-    if ([legacyRegex firstMatchInString:versionId
+    if ([legacyRegex firstMatchInString:mcVersionId
                                 options:0
-                                  range:NSMakeRange(0, versionId.length)]) {
+                                  range:NSMakeRange(0, mcVersionId.length)]) {
         return 1;
     }
     NSRegularExpression *yearRegex = [NSRegularExpression
         regularExpressionWithPattern:@"(?:^|[-_])(\\d{2})(?=[.w])" options:0 error:nil];
-    NSTextCheckingResult *match = [yearRegex firstMatchInString:versionId
+    NSTextCheckingResult *match = [yearRegex firstMatchInString:mcVersionId
                                                         options:0
-                                                          range:NSMakeRange(0, versionId.length)];
+                                                          range:NSMakeRange(0, mcVersionId.length)];
     if (match && match.numberOfRanges >= 2) {
-        return [[versionId substringWithRange:[match rangeAtIndex:1]] integerValue];
+        return [[mcVersionId substringWithRange:[match rangeAtIndex:1]] integerValue];
     }
     return 0;
 }
@@ -788,13 +827,15 @@ static BOOL ameSFPEWSupportsVersionId(NSString *versionId) {
     if (![versionId isKindOfClass:[NSString class]] || versionId.length == 0) {
         return NO;
     }
+    // 名称型 versionId（整合包按名命名）无法从字符串提取，先解析出真实 MC 版本
+    NSString *mcVersionId = ameResolveMcVersionForVersionId(versionId);
     NSRegularExpression *legacyRegex = [NSRegularExpression
         regularExpressionWithPattern:@"(?:^|[-_])1\\.(\\d+)" options:0 error:nil];
-    NSTextCheckingResult *match = [legacyRegex firstMatchInString:versionId
+    NSTextCheckingResult *match = [legacyRegex firstMatchInString:mcVersionId
                                                           options:0
-                                                            range:NSMakeRange(0, versionId.length)];
+                                                            range:NSMakeRange(0, mcVersionId.length)];
     if (match && match.numberOfRanges >= 2) {
-        NSInteger minor = [[versionId substringWithRange:[match rangeAtIndex:1]] integerValue];
+        NSInteger minor = [[mcVersionId substringWithRange:[match rangeAtIndex:1]] integerValue];
         return minor <= 16;
     }
     // 年份制（26.3 / 25w45a 等）或非 1.x 版本号
@@ -1746,12 +1787,14 @@ int launchJVM(NSString *accountId, id launchTarget, int width, int height, int m
         NSInteger metallumMcMajor = ame98_mcMajorFromVersionId(metallumMcVersionId);
         if (metallumMcMajor >= 26) {
             PUSH_MARGV_FORMAT(@"-javaagent:%@/metallum_agent.jar=", librariesPath);
-            // 把实例的 MC 版本 id 传给 agent（按版本选 metallum 类映射）
-            if (metallumMcVersionId.length > 0) {
-                PUSH_MARGV_FORMAT(@"-Dmetallum.mc.version=%@", metallumMcVersionId);
+            // 把实例的真实 MC 版本传给 agent（按版本选 metallum 类映射）。
+            // 名称型 versionId（整合包按名命名）需解析出 MC 版本，不能直接传实例 id。
+            NSString *metallumMcVersion = ameResolveMcVersionForVersionId(metallumMcVersionId);
+            if (metallumMcVersion.length > 0) {
+                PUSH_MARGV_FORMAT(@"-Dmetallum.mc.version=%@", metallumMcVersion);
             }
             NSLog(@"[JavaLauncher] Metallum agent enabled: -javaagent:metallum_agent.jar (mcVersion=%@)",
-                  metallumMcVersionId);
+                  metallumMcVersion);
         } else {
             NSLog(@"[JavaLauncher] Metallum agent skipped: MC major %ld < 26 (agent needs Java 21+ class files, this session runs Java 8)",
                   (long)metallumMcMajor);

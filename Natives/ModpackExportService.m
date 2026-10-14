@@ -926,29 +926,103 @@
     return [hex copy];
 }
 
-+ (NSDictionary *)parseVersionId:(NSString *)versionId {
-    if (versionId.length == 0) return @{};
+/// 剥离版本 id 末尾的 "-<8 位小写 hex>" 短 hash 后缀（Task 5.6 命名）。无后缀则原样返回。
++ (NSString *)versionIdByStrippingHashSuffix:(NSString *)versionId {
+    if (versionId.length <= 9) return versionId;
+    NSRange lastDash = [versionId rangeOfString:@"-" options:NSBackwardsSearch];
+    if (lastDash.location == NSNotFound || lastDash.location == 0) return versionId;
+    NSString *suffix = [versionId substringFromIndex:lastDash.location + 1];
+    if (suffix.length != 8) return versionId;
+    NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+    if ([suffix rangeOfCharacterFromSet:nonHex].location != NSNotFound) return versionId;
+    return [versionId substringToIndex:lastDash.location];
+}
 
-    // Task 5.6：整合包导入的 versionId 会追加 "-<8 位 hex>" 短 hash 后缀用于唯一化
-    // （如 fabric-loader-0.16.0-1.20.1-4c91e3f2）。若直接解析，hash 会被并入
-    // minecraft/loaderVersion 字段（1.20.1-4c91e3f2），导致模组筛选版本、导出反解全错。
-    // 解析前先剥离末尾的 8 位 hex 后缀。
-    NSString *normalizedId = versionId;
-    if (normalizedId.length > 9) {
-        NSRange lastDash = [normalizedId rangeOfString:@"-" options:NSBackwardsSearch];
-        if (lastDash.location != NSNotFound && lastDash.location > 0) {
-            NSString *suffix = [normalizedId substringFromIndex:lastDash.location + 1];
-            NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
-            if (suffix.length == 8 && [suffix rangeOfCharacterFromSet:nonHex].location == NSNotFound) {
-                normalizedId = [normalizedId substringToIndex:lastDash.location];
+/// 名称型 versionId 的 JSON 反查：读 versions/<id>/<id>.json，返回 @{minecraft[, loader, loaderVersion]}。
+/// 读不到文件或非字典时返回 nil（调用方回退为纯版本号）。
++ (nullable NSDictionary *)parseVersionInfoFromJsonForVersionId:(NSString *)versionId {
+    const char *root = getenv("POJAV_GAME_DIR");
+    if (!root) return nil;
+
+    // 优先：整合包 sidecar 元数据（import 时写入 versions/<id>/.amethyst-modpack.json）。
+    // 比解析 version.json 更可靠，且兼容老格式 Forge 的 version.json 无 inheritsFrom 的情形。
+    NSString *sidecarPath = [NSString stringWithFormat:@"%s/versions/%@/.amethyst-modpack.json", root, versionId];
+    NSData *sidecarData = [NSData dataWithContentsOfFile:sidecarPath];
+    if (sidecarData.length > 0) {
+        NSDictionary *m = [NSJSONSerialization JSONObjectWithData:sidecarData options:0 error:nil];
+        if ([m isKindOfClass:[NSDictionary class]]) {
+            NSString *mc = m[@"minecraftVersion"];
+            if ([mc isKindOfClass:[NSString class]] && mc.length > 0 && ![mc isEqualToString:@"unknown"]) {
+                NSMutableDictionary *r = [@{@"minecraft": mc} mutableCopy];
+                NSString *loader = [m[@"loader"] isKindOfClass:[NSString class]] ? [m[@"loader"] lowercaseString] : nil;
+                if (loader.length > 0) {
+                    r[@"loader"] = loader;
+                    NSString *lv = m[@"loaderVersion"];
+                    r[@"loaderVersion"] = [lv isKindOfClass:[NSString class]] ? lv : @"";
+                }
+                return r;
             }
         }
     }
-    versionId = normalizedId;
+
+    NSString *jsonPath = [NSString stringWithFormat:@"%s/versions/%@/%@.json", root, versionId, versionId];
+    NSData *data = [NSData dataWithContentsOfFile:jsonPath];
+    if (data.length == 0) return nil;
+    NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![json isKindOfClass:[NSDictionary class]]) return nil;
+
+    NSString *mcVersion = json[@"inheritsFrom"];
+    if (![mcVersion isKindOfClass:[NSString class]] || mcVersion.length == 0) {
+        NSString *selfId = json[@"id"];
+        mcVersion = ([selfId isKindOfClass:[NSString class]] && selfId.length > 0) ? selfId : versionId;
+    }
+
+    NSString *loader = nil;
+    NSString *loaderVersion = @"";
+    NSArray *libraries = json[@"libraries"];
+    if ([libraries isKindOfClass:[NSArray class]]) {
+        for (NSDictionary *lib in libraries) {
+            NSString *libName = [lib isKindOfClass:[NSDictionary class]] ? lib[@"name"] : nil;
+            if (![libName isKindOfClass:[NSString class]]) continue;
+            NSArray<NSString *> *comps = [libName componentsSeparatedByString:@":"];
+            if (comps.count < 2) continue;
+            NSString *ga = [NSString stringWithFormat:@"%@:%@", comps[0], comps[1]];
+            NSString *ver = comps.count >= 3 ? comps[2] : @"";
+            if ([ga isEqualToString:@"net.fabricmc:fabric-loader"]) { loader = @"fabric"; loaderVersion = ver; break; }
+            if ([ga isEqualToString:@"org.quiltmc:quilt-loader"]) { loader = @"quilt"; loaderVersion = ver; break; }
+            if ([ga isEqualToString:@"net.neoforged:neoforge"] || [ga isEqualToString:@"net.neoforged:forge"]) { loader = @"neoforge"; loaderVersion = ver; break; }
+            if ([ga isEqualToString:@"net.minecraftforge:forge"] || [ga isEqualToString:@"net.minecraftforge:fmlloader"]) { loader = @"forge"; loaderVersion = ver; break; }
+        }
+    }
+
+    if (!loader) {
+        NSString *mainClass = json[@"mainClass"];
+        if ([mainClass isKindOfClass:[NSString class]]) {
+            if ([mainClass containsString:@"fabricmc"]) loader = @"fabric";
+            else if ([mainClass containsString:@"quiltmc"]) loader = @"quilt";
+            else if ([mainClass containsString:@"neoforged"] || [mainClass containsString:@"neoforge"]) loader = @"neoforge";
+            else if ([mainClass containsString:@"minecraftforge"] || [mainClass containsString:@"bootstraplauncher"]) loader = @"forge";
+        }
+    }
+
+    NSMutableDictionary *result = [@{@"minecraft": mcVersion} mutableCopy];
+    if (loader) {
+        result[@"loader"] = loader;
+        result[@"loaderVersion"] = loaderVersion ?: @"";
+    }
+    return result;
+}
+
++ (NSDictionary *)parseVersionId:(NSString *)versionId {
+    if (versionId.length == 0) return @{};
+
+    // loader-based id 可能带 Task 5.6 的 "-<8 位 hex>" 短 hash 后缀，解析前先剥离。
+    // 名称型 id（整合包按名命名）不含 loader 关键字，故只在字符串命中 loader 形态时使用剥离结果。
+    NSString *loaderId = [self versionIdByStrippingHashSuffix:versionId];
 
     // fabric-loader-<loaderVer>-<mcVer>
-    if ([versionId hasPrefix:@"fabric-loader-"]) {
-        NSString *rest = [versionId substringFromIndex:@"fabric-loader-".length];
+    if ([loaderId hasPrefix:@"fabric-loader-"]) {
+        NSString *rest = [loaderId substringFromIndex:@"fabric-loader-".length];
         NSArray *parts = [rest componentsSeparatedByString:@"-"];
         if (parts.count >= 2) {
             NSString *loaderVersion = parts[0];
@@ -958,8 +1032,8 @@
     }
 
     // quilt-loader-<loaderVer>-<mcVer>
-    if ([versionId hasPrefix:@"quilt-loader-"]) {
-        NSString *rest = [versionId substringFromIndex:@"quilt-loader-".length];
+    if ([loaderId hasPrefix:@"quilt-loader-"]) {
+        NSString *rest = [loaderId substringFromIndex:@"quilt-loader-".length];
         NSArray *parts = [rest componentsSeparatedByString:@"-"];
         if (parts.count >= 2) {
             NSString *loaderVersion = parts[0];
@@ -969,20 +1043,26 @@
     }
 
     // <mcVer>-forge-<loaderVer>
-    NSRange forgeRange = [versionId rangeOfString:@"-forge-"];
+    NSRange forgeRange = [loaderId rangeOfString:@"-forge-"];
     if (forgeRange.location != NSNotFound) {
-        NSString *mcVersion = [versionId substringToIndex:forgeRange.location];
-        NSString *loaderVersion = [versionId substringFromIndex:forgeRange.location + forgeRange.length];
+        NSString *mcVersion = [loaderId substringToIndex:forgeRange.location];
+        NSString *loaderVersion = [loaderId substringFromIndex:forgeRange.location + forgeRange.length];
         return @{@"loader": @"forge", @"loaderVersion": loaderVersion, @"minecraft": mcVersion};
     }
 
     // <mcVer>-neoforge-<loaderVer>
-    NSRange neoforgeRange = [versionId rangeOfString:@"-neoforge-"];
+    NSRange neoforgeRange = [loaderId rangeOfString:@"-neoforge-"];
     if (neoforgeRange.location != NSNotFound) {
-        NSString *mcVersion = [versionId substringToIndex:neoforgeRange.location];
-        NSString *loaderVersion = [versionId substringFromIndex:neoforgeRange.location + neoforgeRange.length];
+        NSString *mcVersion = [loaderId substringToIndex:neoforgeRange.location];
+        NSString *loaderVersion = [loaderId substringFromIndex:neoforgeRange.location + neoforgeRange.length];
         return @{@"loader": @"neoforge", @"loaderVersion": loaderVersion, @"minecraft": mcVersion};
     }
+
+    // 名称型 versionId（整合包按整合包名命名）：字符串里没有 loader/MC 信息，
+    // 回落读取 POJAV_GAME_DIR/versions/<id>/<id>.json，从 inheritsFrom 取 MC 版本、
+    // 从 libraries/mainClass 推断 loader。
+    NSDictionary *fromJson = [self parseVersionInfoFromJsonForVersionId:versionId];
+    if (fromJson) return fromJson;
 
     // 纯 mc 版本（无 loader）
     return @{@"minecraft": versionId};

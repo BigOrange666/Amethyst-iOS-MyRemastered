@@ -1096,6 +1096,19 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     NSString *modsDir = [gameDirAbsolute stringByAppendingPathComponent:@"mods"];
     [fm createDirectoryAtPath:modsDir withIntermediateDirectories:YES attributes:nil error:nil];
 
+    // 记录整合包 loader/MC 元数据到实例目录的 sidecar：名称型 versionId（versions/<整合包名>）
+    // 无法从 id 字符串反解 loader/MC，ModpackExportService.parseVersionId: 会优先读此文件
+    // （模组筛选 / 导出反解 / 现代版本判定都依赖）。兼容老格式 Forge version.json 无 inheritsFrom。
+    NSDictionary *sidecar = @{
+        @"name": modpackInfo[@"name"] ?: @"",
+        @"loader": modpackInfo[@"loader"] ?: @"",
+        @"loaderVersion": modpackInfo[@"loaderVersion"] ?: @"",
+        @"minecraftVersion": modpackInfo[@"minecraftVersion"] ?: @""
+    };
+    NSData *sidecarData = [NSJSONSerialization dataWithJSONObject:sidecar options:NSJSONWritingPrettyPrinted error:nil];
+    [sidecarData writeToFile:[gameDirAbsolute stringByAppendingPathComponent:@".amethyst-modpack.json"]
+                     options:NSDataWritingAtomic error:nil];
+
     // 取消检查点
     if ([self checkCancelledWithError:error]) {
         [self cleanupAbortedImportWithGameDir:gameDirAbsolute mainTaskFailed:NO];
@@ -1329,17 +1342,34 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     }
 }
 
-/// 根据 modpackInfo 计算 lastVersionId
-/// Task 5.6（P1）：versionId 唯一化——基础 id 追加整合包短 hash 后缀（8 位 hex），
-/// 消除多整合包间及与单独安装加载器的版本 JSON 物理覆盖。
-///（旧实现：导入两个相同 loader+MC 版本的整合包时 versionId 相同，
-///  versions/<id>/<id>.json 后者覆盖前者，先导入的整合包启动错乱；
-///  profile lastVersionId 由 createProfileForModpack 同步指向本 id，无需额外处理。）
+/// 计算整合包的版本目录名 / versionId。
+/// 需求（用户 2026-10-14）：**导入 / 下载的整合包，目录按「整合包名」命名**（对齐 HMCL），
+/// 例如 versions/GTNH；重名时追加 -2/-3… 去重，绝不覆盖已有实例。若整合包名不可用，
+/// 退回 loader-based id + 短 hash（Task 5.6 唯一化方案：旧实现导入两个相同 loader+MC 的
+/// 整合包会共用同一 versionId，versions/<id>/<id>.json 互相覆盖）。
+/// 注意：名称型 versionId 不含 loader/MC 信息，导入时会在实例目录写 sidecar
+/// `versions/<id>/.amethyst-modpack.json`，ModpackExportService.parseVersionId: 优先读它，
+/// 再回落到 version.json 的 inheritsFrom / libraries 还原 loader 与 MC 版本。
 - (NSString *)versionIdForModpack:(NSDictionary *)modpackInfo {
     NSString *loader = modpackInfo[@"loader"];
     NSString *loaderVersion = modpackInfo[@"loaderVersion"];
     NSString *minecraftVersion = modpackInfo[@"minecraftVersion"];
 
+    // 首选：整合包名（清洗 + 去重）
+    NSString *sanitized = [self sanitizedVersionIdFromName:modpackInfo[@"name"]];
+    if (sanitized.length > 0) {
+        NSString *versionsRoot = [NSString stringWithFormat:@"%s/versions", getenv("POJAV_GAME_DIR")];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *candidate = sanitized;
+        NSInteger suffix = 2;
+        while ([fm fileExistsAtPath:[versionsRoot stringByAppendingPathComponent:candidate]]) {
+            candidate = [NSString stringWithFormat:@"%@-%ld", sanitized, (long)suffix];
+            suffix++;
+        }
+        return candidate;
+    }
+
+    // 退回：loader-based id + 短 hash（名称缺失/非法时）
     NSString *baseId = nil;
     if ([loader isEqualToString:@"Fabric"]) {
         baseId = [NSString stringWithFormat:@"fabric-loader-%@-%@", loaderVersion, minecraftVersion];
@@ -1369,6 +1399,43 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     // NSString.hash 同一运行时内稳定；取低 32 位格式化为 8 位 hex 后缀
     NSUInteger hash = [hashSource hash] & 0xFFFFFFFF;
     return [NSString stringWithFormat:@"%@-%08lx", baseId, (unsigned long)hash];
+}
+
+/// 把整合包可读名清洗为合法的版本目录名：
+///   替换路径非法字符（/ \ : * ? " < > |、控制字符与换行）为 "-"；
+///   去掉首尾空白与点；截断到 64 字符；仅剩分隔符时视为无效（返回 @""）。
+- (NSString *)sanitizedVersionIdFromName:(NSString *)name {
+    if (![name isKindOfClass:[NSString class]] || name.length == 0) return @"";
+    static NSCharacterSet *illegal = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSMutableCharacterSet *set = [NSMutableCharacterSet characterSetWithCharactersInString:@"/\\:*?\"<>|\n\r\t"];
+        [set formUnionWithCharacterSet:[NSCharacterSet controlCharacterSet]];
+        illegal = [set copy];
+    });
+    NSMutableString *out = [NSMutableString stringWithCapacity:name.length];
+    for (NSUInteger i = 0; i < name.length; i++) {
+        unichar c = [name characterAtIndex:i];
+        if ([illegal characterIsMember:c]) {
+            [out appendString:@"-"];
+        } else {
+            [out appendString:[NSString stringWithCharacters:&c length:1]];
+        }
+    }
+    NSString *result = [out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    while ([result hasPrefix:@"."]) {
+        result = [result substringFromIndex:1];
+    }
+    NSCharacterSet *trailing = [NSCharacterSet characterSetWithCharactersInString:@". "];
+    while (result.length > 0 && [trailing characterIsMember:[result characterAtIndex:result.length - 1]]) {
+        result = [result substringToIndex:result.length - 1];
+    }
+    if (result.length > 64) {
+        result = [result substringToIndex:64];
+    }
+    NSString *probe = [result stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"-. _"]];
+    if (probe.length == 0) return @"";
+    return result;
 }
 
 /// 解压 overrides 目录到 gameDir

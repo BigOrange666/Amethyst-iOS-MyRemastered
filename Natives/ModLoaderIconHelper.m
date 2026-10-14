@@ -7,6 +7,7 @@
 //
 
 #import "ModLoaderIconHelper.h"
+#import "ModpackExportService.h"
 
 @implementation ModLoaderIconHelper
 
@@ -400,6 +401,11 @@
     if ([lower containsString:@"fabric"])     return @"fabric";
     if ([lower containsString:@"iris"])       return @"iris";
     if ([lower containsString:@"rift"])       return @"rift";
+
+    // 名称型 versionId（整合包按名命名）字符串里没有加载器关键字，
+    // 回落读取实例 sidecar / version.json 识别加载器（parseVersionId 统一实现）。
+    NSString *loader = [ModpackExportService parseVersionId:versionId][@"loader"];
+    if (loader.length > 0) return loader;
     return nil;
 }
 
