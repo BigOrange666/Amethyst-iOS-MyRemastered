@@ -1284,6 +1284,18 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
             [rootVC presentViewController:alert animated:YES completion:nil];
         });
     }
+
+    // 关键修复：整合包版本目录（versions/<versionId>）已在后台线程落盘，但
+    // LauncherRootViewController/LauncherCardLayoutViewController 的 localVersionList 只在
+    // 收到 ReloadProfileList 时才重建。此前导入成功后未发该通知，导致随后启动时
+    // findVersionInRemoteList 在列表里找不到该版本，报"找不到版本信息"（i18n_str_432）。
+    if ([NSThread isMainThread]) {
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"ReloadProfileList" object:nil];
+    } else {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"ReloadProfileList" object:nil];
+        });
+    }
     return YES;
 }
 

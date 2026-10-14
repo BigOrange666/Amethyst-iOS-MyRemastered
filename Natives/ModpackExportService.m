@@ -929,6 +929,23 @@
 + (NSDictionary *)parseVersionId:(NSString *)versionId {
     if (versionId.length == 0) return @{};
 
+    // Task 5.6：整合包导入的 versionId 会追加 "-<8 位 hex>" 短 hash 后缀用于唯一化
+    // （如 fabric-loader-0.16.0-1.20.1-4c91e3f2）。若直接解析，hash 会被并入
+    // minecraft/loaderVersion 字段（1.20.1-4c91e3f2），导致模组筛选版本、导出反解全错。
+    // 解析前先剥离末尾的 8 位 hex 后缀。
+    NSString *normalizedId = versionId;
+    if (normalizedId.length > 9) {
+        NSRange lastDash = [normalizedId rangeOfString:@"-" options:NSBackwardsSearch];
+        if (lastDash.location != NSNotFound && lastDash.location > 0) {
+            NSString *suffix = [normalizedId substringFromIndex:lastDash.location + 1];
+            NSCharacterSet *nonHex = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet];
+            if (suffix.length == 8 && [suffix rangeOfCharacterFromSet:nonHex].location == NSNotFound) {
+                normalizedId = [normalizedId substringToIndex:lastDash.location];
+            }
+        }
+    }
+    versionId = normalizedId;
+
     // fabric-loader-<loaderVer>-<mcVer>
     if ([versionId hasPrefix:@"fabric-loader-"]) {
         NSString *rest = [versionId substringFromIndex:@"fabric-loader-".length];

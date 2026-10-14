@@ -434,7 +434,18 @@ static CGFloat LauncherRootLayoutRightPanelWidth(UITraitCollection *trait) {
             }
         }
     }
-    
+
+    // 兜底：整合包实例目录为 versions/<versionId>，版本 JSON 与实例数据同目录。
+    // 若版本列表尚未刷新（localVersionList 陈旧）导致查不到，只要 <versionId>.json 存在，
+    // 就视为可启动的本地版本，避免误报"找不到版本信息"（i18n_str_432）。
+    if (!versionObject) {
+        NSString *versionJsonPath = [NSString stringWithFormat:@"%s/versions/%@/%@.json",
+                                     getenv("POJAV_GAME_DIR"), versionId, versionId];
+        if ([NSFileManager.defaultManager fileExistsAtPath:versionJsonPath]) {
+            versionObject = @{@"id": versionId, @"type": @"custom"};
+        }
+    }
+
     callback(versionObject);
 }
 
