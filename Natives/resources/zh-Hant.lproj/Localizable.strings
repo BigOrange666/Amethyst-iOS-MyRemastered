@@ -1997,3 +1997,11 @@
 "preference.isolation.default.version" = "隔離所有新實例";
 "preference.isolation.default.shared" = "從不隔離";
 "preference.detail.default_isolation" = "僅在建立實例時生效，既有實例不受影響。";
+
+// 存量 custom_gamedir 整合包遷移（啟動時一次性提示）
+"modpack.migration.title" = "遷移整合包實例";
+"modpack.migration.message" = "偵測到 %ld 個整合包實例仍位於舊的 custom_gamedir 目錄。是否將它們遷移到 versions/<版本ID>（與版本隔離保持一致）？";
+"modpack.migration.migrate" = "立即遷移";
+"modpack.migration.later" = "稍後";
+"modpack.migration.success" = "已遷移 %ld 個整合包實例。";
+"modpack.migration.failed" = "遷移失敗：%@";

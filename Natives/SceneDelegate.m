@@ -6,6 +6,7 @@
 #import "LauncherPreferences.h"
 #import "BackgroundManager.h"
 #import "UpdateChecker.h"
+#import "ModpackImportService.h"
 // Terracotta 暂时移除（排查启动崩溃）
 // #import "TerracottaManager.h"
 // #import "TerracottaBridge.h"
@@ -75,7 +76,12 @@ extern UIWindow *mainWindow;
     // 中已 loadSavedBackground/loadUISettings，单例首次访问即完成初始化，无需延迟。
     [[BackgroundManager sharedManager] applyBackgroundToWindow:self.window];
 
-    [self showTranslationNoticeIfNeeded];
+    BOOL showedMigration = [self showModpackMigrationNoticeIfNeeded];
+
+    // 若已弹出整合包迁移提示（一次只弹一个 alert），本轮不再弹翻译提示，避免相互打断。
+    if (!showedMigration) {
+        [self showTranslationNoticeIfNeeded];
+    }
 
     // 启动时自动检查启动器更新（参照 ZL2 LauncherUpgradeViewModel.checkOnAppStart）。
     // 仅当确实存在新版本时才弹窗；请求失败、已是最新、处于限频窗口内一律静默。
@@ -98,6 +104,61 @@ extern UIWindow *mainWindow;
                                              selector:@selector(applyUITheme:)
                                                  name:@"UIThemeChanged"
                                                object:nil];
+}
+
+- (BOOL)showModpackMigrationNoticeIfNeeded {
+    // 旧版本把整合包实例放在 custom_gamedir/<id>，现已统一到 versions/<versionId>。
+    // 检测到遗留实例时提示用户迁移（转移目录 + 改写 profile），迁移完成或用户选择“稍后”前不静默改动数据。
+    NSArray<NSDictionary *> *legacyModpacks = [ModpackImportService detectLegacyCustomGamedirModpacks];
+    if (legacyModpacks.count == 0) {
+        return NO;
+    }
+
+    UIViewController *presenter = self.window.rootViewController;
+    if (presenter == nil || presenter.presentedViewController != nil) {
+        return NO;
+    }
+
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:localize(@"modpack.migration.title", nil)
+                         message:[NSString stringWithFormat:localize(@"modpack.migration.message", nil),
+                                  (long)legacyModpacks.count]
+                  preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addAction:[UIAlertAction actionWithTitle:localize(@"modpack.migration.later", nil)
+                                              style:UIAlertActionStyleCancel
+                                            handler:nil]];
+
+    __weak typeof(self) weakSelf = self;
+    [alert addAction:[UIAlertAction actionWithTitle:localize(@"modpack.migration.migrate", nil)
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(UIAlertAction * _Nonnull action) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+        NSError *error = nil;
+        NSInteger migrated = [ModpackImportService migrateLegacyCustomGamedirModpacks:&error];
+        BOOL failed = (error != nil) || (migrated < (NSInteger)legacyModpacks.count);
+        NSString *message = failed
+            ? [NSString stringWithFormat:localize(@"modpack.migration.failed", nil),
+               error.localizedDescription ?: @""]
+            : [NSString stringWithFormat:localize(@"modpack.migration.success", nil), (long)migrated];
+
+        UIAlertController *result = [UIAlertController
+            alertControllerWithTitle:localize(@"modpack.migration.title", nil)
+                             message:message
+                      preferredStyle:UIAlertControllerStyleAlert];
+        [result addAction:[UIAlertAction actionWithTitle:localize(@"i18n_str_2002", nil)
+                                                   style:UIAlertActionStyleDefault
+                                                 handler:nil]];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIViewController *root = strongSelf.window.rootViewController;
+            if (root.presentedViewController) return;
+            [root presentViewController:result animated:YES completion:nil];
+        });
+    }]];
+
+    [presenter presentViewController:alert animated:YES completion:nil];
+    return YES;
 }
 
 - (void)showTranslationNoticeIfNeeded {

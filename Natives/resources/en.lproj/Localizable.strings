@@ -2008,3 +2008,11 @@
 "preference.isolation.default.version" = "All new instances";
 "preference.isolation.default.shared" = "Never";
 "preference.detail.default_isolation" = "Applied once when an instance is created; existing instances are not affected.";
+
+// Legacy custom_gamedir modpack migration (one-time prompt at launch)
+"modpack.migration.title" = "Migrate Modpack Instances";
+"modpack.migration.message" = "%ld modpack instance(s) were imported with the old layout and still live under custom_gamedir. Migrate them into versions/<version id> to match version isolation?";
+"modpack.migration.migrate" = "Migrate";
+"modpack.migration.later" = "Later";
+"modpack.migration.success" = "Migrated %ld modpack instance(s).";
+"modpack.migration.failed" = "Migration failed: %@";

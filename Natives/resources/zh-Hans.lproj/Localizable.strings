@@ -2005,3 +2005,11 @@
 "preference.isolation.default.version" = "All new instances";
 "preference.isolation.default.shared" = "Never";
 "preference.detail.default_isolation" = "Applied once when an instance is created; existing instances are not affected.";
+
+// 存量 custom_gamedir 整合包迁移（启动时一次性提示）
+"modpack.migration.title" = "迁移整合包实例";
+"modpack.migration.message" = "检测到 %ld 个整合包实例仍位于旧的 custom_gamedir 目录。是否将它们迁移到 versions/<版本ID>（与版本隔离保持一致）？";
+"modpack.migration.migrate" = "立即迁移";
+"modpack.migration.later" = "稍后";
+"modpack.migration.success" = "已迁移 %ld 个整合包实例。";
+"modpack.migration.failed" = "迁移失败：%@";

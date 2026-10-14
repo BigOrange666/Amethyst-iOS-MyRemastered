@@ -64,6 +64,18 @@ typedef NS_ENUM(NSInteger, ModpackImportFormat) {
 /// 跳过是警告而非失败：不计入 failedFiles，也不会让 importModpack: 返回 NO。
 - (NSArray<NSDictionary *> *)skippedDownloadFiles;
 
+#pragma mark - 存量 custom_gamedir 整合包迁移
+
+/// 检测历史遗留的 custom_gamedir/<id> 整合包实例（旧版本导入，目录尚未并入 versions/<versionId>）。
+/// 返回可迁移条目列表，每条：@{@"profileName", @"versionId", @"sourceDir", @"destDir"}。
+/// 无遗留实例时返回空数组（调用方据此决定是否弹提示框）。
++ (NSArray<NSDictionary *> *)detectLegacyCustomGamedirModpacks;
+
+/// 把检测到的遗留实例迁移到 versions/<versionId>：搬迁目录内容（合并、不覆盖已有文件）、
+/// 改写 profile 的 gameDir/isolation、更新 ImportedModpacks 注册表。
+/// 返回实际迁移成功的实例数；任一实例失败时通过 error 返回首个失败原因。
++ (NSInteger)migrateLegacyCustomGamedirModpacks:(NSError **)error;
+
 @end
 
 NS_ASSUME_NONNULL_END

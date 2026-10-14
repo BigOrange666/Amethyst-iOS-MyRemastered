@@ -2835,4 +2835,199 @@ static NSString * const kImportedModpacksKey = @"ImportedModpacks";
     return YES;
 }
 
+#pragma mark - 存量 custom_gamedir 整合包迁移
+
+/// 读取 ImportedModpacks 注册表（与 getImportedModpacks 同源，供类方法使用）
+static NSArray<NSDictionary *> *AMELoadImportedModpacks(void) {
+    NSArray *modpacks = [[NSUserDefaults standardUserDefaults] arrayForKey:kImportedModpacksKey];
+    return [modpacks isKindOfClass:[NSArray class]] ? modpacks : @[];
+}
+
+/// 历史遗留整合包工作区根目录：<POJAV_GAME_DIR>/custom_gamedir
++ (NSString *)legacyCustomGamedirRoot {
+    return [[GameDirectoryResolver mainDirectory] stringByAppendingPathComponent:@"custom_gamedir"];
+}
+
++ (NSArray<NSDictionary *> *)detectLegacyCustomGamedirModpacks {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *legacyRoot = [[self legacyCustomGamedirRoot] stringByStandardizingPath];
+    NSString *legacyPrefix = [legacyRoot stringByAppendingString:@"/"];
+    NSString *versionsDir = [[GameDirectoryResolver mainDirectory] stringByAppendingPathComponent:@"versions"];
+
+    NSDictionary *profiles = PLProfiles.current.profiles;
+    if (![profiles isKindOfClass:[NSDictionary class]]) profiles = @{};
+
+    NSMutableArray<NSDictionary *> *result = [NSMutableArray array];
+    NSMutableSet<NSString *> *seenSources = [NSMutableSet set];
+
+    void (^appendItem)(NSString *, NSString *, NSString *) = ^(NSString *profileName, NSString *versionId, NSString *sourceDir) {
+        if (versionId.length == 0) return;
+        NSString *src = sourceDir.stringByStandardizingPath;
+        if (src.length == 0) return;
+        if (![src hasPrefix:legacyPrefix]) return;           // 必须位于 custom_gamedir/ 之下
+        if ([src isEqualToString:legacyRoot]) return;         // 根目录本身不算实例
+        if (![fm fileExistsAtPath:src]) return;               // 目录已不存在则无需迁移
+        if ([seenSources containsObject:src]) return;
+        [seenSources addObject:src];
+        [result addObject:@{
+            @"profileName": profileName ?: @"",
+            @"versionId": versionId,
+            @"sourceDir": src,
+            @"destDir": [versionsDir stringByAppendingPathComponent:versionId]
+        }];
+    };
+
+    // ① 权威来源：ImportedModpacks 注册表（记录本次导入的 gameDirAbsolute/versionId/profileName）
+    for (NSDictionary *entry in AMELoadImportedModpacks()) {
+        if (![entry isKindOfClass:[NSDictionary class]]) continue;
+        NSString *src = entry[@"gameDirAbsolute"];
+        if (![src isKindOfClass:[NSString class]] || src.length == 0) src = entry[@"modpackDir"];
+        if (![src isKindOfClass:[NSString class]] || src.length == 0) continue;
+
+        NSString *versionId = entry[@"versionId"];
+        NSString *profileName = entry[@"profileName"];
+        if (versionId.length == 0 && profileName.length > 0) {
+            // 老注册表缺 versionId：回退用 profile.lastVersionId（导入时写入的同一值）
+            NSDictionary *prof = profiles[profileName];
+            if ([prof isKindOfClass:[NSDictionary class]]) {
+                id lv = prof[@"lastVersionId"];
+                if ([lv isKindOfClass:[NSString class]]) versionId = lv;
+            }
+        }
+        appendItem(profileName, versionId, (NSString *)src);
+    }
+
+    // ② 兜底：profile 自身 gameDir 指向 custom_gamedir（注册表可能缺失或字段不全）
+    for (NSString *name in profiles) {
+        NSDictionary *prof = profiles[name];
+        if (![prof isKindOfClass:[NSDictionary class]]) continue;
+        id rawGameDir = prof[@"gameDir"];
+        if (![rawGameDir isKindOfClass:[NSString class]] || [(NSString *)rawGameDir length] == 0) continue;
+        NSString *src = [GameDirectoryResolver absolutePath:(NSString *)rawGameDir];
+        id lv = prof[@"lastVersionId"];
+        NSString *versionId = [lv isKindOfClass:[NSString class]] ? (NSString *)lv : nil;
+        appendItem(name, versionId, src);
+    }
+
+    return result;
+}
+
+/// 递归搬迁 src 目录内容到 dst：目标不存在则移动；目录冲突递归合并；
+/// 文件冲突另存到 dst/.migration_conflicts 下，绝不覆盖目标已有文件。
++ (BOOL)ameMoveContentsOfDirectory:(NSString *)src intoDirectory:(NSString *)dst error:(NSError **)error {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSError *err = nil;
+
+    if (![fm createDirectoryAtPath:dst withIntermediateDirectories:YES attributes:nil error:&err]) {
+        if (error) *error = err;
+        return NO;
+    }
+    NSArray<NSString *> *children = [fm contentsOfDirectoryAtPath:src error:&err];
+    if (children == nil) {
+        if (error) *error = err;
+        return NO;
+    }
+    for (NSString *name in children) {
+        NSString *from = [src stringByAppendingPathComponent:name];
+        NSString *to = [dst stringByAppendingPathComponent:name];
+        BOOL toIsDir = NO, fromIsDir = NO;
+        BOOL toExists = [fm fileExistsAtPath:to isDirectory:&toIsDir];
+        [fm fileExistsAtPath:from isDirectory:&fromIsDir];
+
+        if (!toExists) {
+            if (![fm moveItemAtPath:from toPath:to error:&err]) {
+                if (error) *error = err;
+                return NO;
+            }
+        } else if (toIsDir && fromIsDir) {
+            if (![self ameMoveContentsOfDirectory:from intoDirectory:to error:&err]) {
+                if (error) *error = err;
+                return NO;
+            }
+            [fm removeItemAtPath:from error:nil];
+        } else {
+            // 文件冲突：把源端另存，保留用户数据且不覆盖目标
+            NSString *conflictDir = [dst stringByAppendingPathComponent:@".migration_conflicts"];
+            [fm createDirectoryAtPath:conflictDir withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString *conflictPath = [conflictDir stringByAppendingPathComponent:name];
+            [fm removeItemAtPath:conflictPath error:nil];
+            NSLog(@"[ModpackMigration] 文件冲突，源端另存: %@ -> %@", from, conflictPath);
+            if (![fm moveItemAtPath:from toPath:conflictPath error:&err]) {
+                if (error) *error = err;
+                return NO;
+            }
+        }
+    }
+    return YES;
+}
+
++ (NSInteger)migrateLegacyCustomGamedirModpacks:(NSError **)error {
+    NSArray<NSDictionary *> *items = [self detectLegacyCustomGamedirModpacks];
+    if (items.count == 0) return 0;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableDictionary *profiles = PLProfiles.current.profiles;
+    NSMutableArray *registry = [AMELoadImportedModpacks() mutableCopy];
+    NSInteger migrated = 0;
+
+    for (NSDictionary *item in items) {
+        NSString *src = item[@"sourceDir"];
+        NSString *dst = item[@"destDir"];
+        NSString *versionId = item[@"versionId"];
+        NSString *profileName = item[@"profileName"];
+
+        NSError *moveErr = nil;
+        if (![self ameMoveContentsOfDirectory:src intoDirectory:dst error:&moveErr]) {
+            NSLog(@"[ModpackMigration] 迁移失败 src=%@ dst=%@ err=%@", src, dst, moveErr);
+            if (error) *error = moveErr;
+            continue;
+        }
+
+        // profile：改为版本隔离并指向 versions/<versionId>
+        if (profileName.length > 0) {
+            id existing = profiles[profileName];
+            if ([existing isKindOfClass:[NSDictionary class]]) {
+                NSMutableDictionary *prof = [existing mutableCopy];
+                prof[@"gameDir"] = [NSString stringWithFormat:@"./versions/%@", versionId];
+                prof[@"isolation"] = AMEIsolationVersion;
+                if (![prof[@"type"] isKindOfClass:[NSString class]]) prof[@"type"] = @"modpack";
+                profiles[profileName] = prof;
+            }
+        }
+
+        // 注册表：改写目录与相对路径（供删除/导出使用）
+        for (NSUInteger i = 0; i < registry.count; i++) {
+            NSDictionary *entry = registry[i];
+            if (![entry isKindOfClass:[NSDictionary class]]) continue;
+            NSString *eSrc = entry[@"gameDirAbsolute"];
+            if (![eSrc isKindOfClass:[NSString class]] || eSrc.length == 0) eSrc = entry[@"modpackDir"];
+            if (![eSrc isKindOfClass:[NSString class]]) continue;
+            if (![eSrc.stringByStandardizingPath isEqualToString:src]) continue;
+            NSMutableDictionary *m = [entry mutableCopy];
+            m[@"gameDirAbsolute"] = dst;
+            m[@"gameDirRelative"] = [NSString stringWithFormat:@"./versions/%@", versionId];
+            m[@"versionId"] = versionId;
+            registry[i] = m;
+        }
+
+        // 源目录内容已全部搬走，删除空目录
+        [fm removeItemAtPath:src error:nil];
+        migrated++;
+    }
+
+    [PLProfiles.current save];
+    [[NSUserDefaults standardUserDefaults] setObject:registry forKey:kImportedModpacksKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+
+    // custom_gamedir 已空则连同根目录一起删除
+    NSString *legacyRoot = [self legacyCustomGamedirRoot];
+    NSArray *leftover = [fm contentsOfDirectoryAtPath:legacyRoot error:nil];
+    if (leftover != nil && leftover.count == 0) {
+        [fm removeItemAtPath:legacyRoot error:nil];
+    }
+
+    NSLog(@"[ModpackMigration] 迁移完成：%ld/%lu 个实例", (long)migrated, (unsigned long)items.count);
+    return migrated;
+}
+
 @end
